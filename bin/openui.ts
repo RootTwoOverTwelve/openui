@@ -24,7 +24,7 @@ async function ensurePluginInstalled() {
 
   console.log("\x1b[38;5;141m[plugin]\x1b[0m Installing Claude Code plugin...");
 
-  const GITHUB_RAW = "https://raw.githubusercontent.com/Fallomai/openui/main/claude-code-plugin";
+  const GITHUB_RAW = "https://raw.githubusercontent.com/RootTwoOverTwelve/openui/main/claude-code-plugin";
 
   try {
     // Create directories
