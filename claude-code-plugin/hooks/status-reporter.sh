@@ -45,9 +45,6 @@ if command -v jq &> /dev/null; then
 
   # Subagent info (for SubagentStop)
   SUBAGENT_TYPE=$(echo "$INPUT" | jq -r '.subagent_type // empty' 2>/dev/null || echo "")
-
-  # Get entire input for debug (truncated)
-  INPUT_PREVIEW=$(echo "$INPUT" | head -c 1000)
 else
   # Fallback to grep/sed for systems without jq
   CLAUDE_SESSION_ID=$(echo "$INPUT" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*: *"//' | sed 's/"$//' || echo "")
@@ -63,12 +60,7 @@ else
   SUBAGENT_TYPE=""
   NOTIFICATION_MESSAGE=""
   STOP_RESULT=""
-  INPUT_PREVIEW=$(echo "$INPUT" | head -c 500)
 fi
-
-# Debug logging with more details
-echo "[$(date)] Hook: event=$HOOK_EVENT status=$STATUS tool=$TOOL_NAME notification=$NOTIFICATION_TYPE openui=$OPENUI_SID" >> "$DEBUG_LOG" 2>/dev/null || true
-echo "[$(date)] Input preview: $INPUT_PREVIEW" >> "$DEBUG_LOG" 2>/dev/null || true
 
 # Build the JSON payload with all available data
 if [ -n "$STATUS" ]; then
@@ -140,7 +132,6 @@ if [ -n "$STATUS" ]; then
     -H "Content-Type: application/json" \
     -d "$PAYLOAD" \
     --max-time 2 2>&1) || true
-  echo "[$(date)] Response: $RESPONSE" >> "$DEBUG_LOG" 2>/dev/null || true
 fi
 
 # Always exit successfully so we don't block Claude

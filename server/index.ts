@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import { serveStatic } from "hono/bun";
 import type { ServerWebSocket } from "bun";
 import { apiRoutes } from "./routes/api";
@@ -9,13 +8,28 @@ import type { WebSocketData } from "./types";
 
 const app = new Hono();
 const PORT = Number(process.env.PORT) || 6968;
+
+const ALLOWED_ORIGINS = new Set([
+  `http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`,
+  "http://localhost:6969", "http://127.0.0.1:6969",
+]);
+
+function originOk(req: Request): boolean {
+  const origin = req.headers.get("origin");
+  if (!origin) return true;
+  return ALLOWED_ORIGINS.has(origin);
+}
+
 const QUIET = !!process.env.OPENUI_QUIET;
 
 // Conditionally log only in dev mode
 const log = QUIET ? () => {} : console.log.bind(console);
 
 // Middleware
-app.use("*", cors());
+app.use("*", async (c, next) => {
+  if (!originOk(c.req.raw)) return c.text("Forbidden", 403);
+  await next();
+});
 
 // API Routes
 app.route("/api", apiRoutes);
@@ -26,7 +40,9 @@ app.use("/*", serveStatic({ root: "./client/dist" }));
 // WebSocket server
 Bun.serve<WebSocketData>({
   port: PORT,
+  hostname: "127.0.0.1",
   fetch(req, server) {
+    if (!originOk(req)) return new Response("Forbidden", { status: 403 });
     const url = new URL(req.url);
 
     if (url.pathname === "/ws") {
