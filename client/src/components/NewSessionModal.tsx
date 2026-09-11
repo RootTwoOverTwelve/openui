@@ -8,6 +8,7 @@ import {
   Cpu,
   FolderOpen,
   Terminal,
+  RotateCcw,
   MessageSquare,
   Plus,
   Minus,
@@ -151,6 +152,8 @@ export function NewSessionModal({
     updateSession,
     nodes,
     launchCwd,
+    setSelectedNodeId,
+    setSidebarOpen,
   } = useStore();
 
   // Get ReactFlow instance to access viewport
@@ -164,6 +167,14 @@ export function NewSessionModal({
   const [customName, setCustomName] = useState("");
   const [commandArgs, setCommandArgs] = useState("");
   const [initialPrompt, setInitialPrompt] = useState("");
+  const [resumeId, setResumeId] = useState("");
+  const [resumeLookup, setResumeLookup] = useState<
+    | { state: "idle" }
+    | { state: "checking" }
+    | { state: "found"; cwd?: string; openInNodeId?: string }
+    | { state: "missing" }
+  >({ state: "idle" });
+  const [createError, setCreateError] = useState<string | null>(null);
   const [count, setCount] = useState(1);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -210,6 +221,9 @@ export function NewSessionModal({
         setCustomName(existingSession.customName || "");
         setCommandArgs("");
         setInitialPrompt("");
+        setResumeId("");
+        setResumeLookup({ state: "idle" });
+        setCreateError(null);
         setCount(1);
       } else {
         setSelectedAgent(null);
@@ -217,6 +231,9 @@ export function NewSessionModal({
         setCustomName("");
         setCommandArgs("");
         setInitialPrompt("");
+        setResumeId("");
+        setResumeLookup({ state: "idle" });
+        setCreateError(null);
         setCount(1);
       }
       setActiveTab("blank");
@@ -374,6 +391,36 @@ export function NewSessionModal({
     loadGithubIssues(githubRepoUrl);
   };
 
+  // Validate a pasted Claude session ID and prefill its working directory
+  useEffect(() => {
+    const id = resumeId.trim();
+    if (!id) {
+      setResumeLookup({ state: "idle" });
+      return;
+    }
+    let cancelled = false;
+    setResumeLookup({ state: "checking" });
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/claude/sessions/${encodeURIComponent(id)}`);
+        if (cancelled) return;
+        if (!res.ok) {
+          setResumeLookup({ state: "missing" });
+          return;
+        }
+        const data = await res.json();
+        setResumeLookup({ state: "found", cwd: data.cwd, openInNodeId: data.openInNodeId });
+        if (data.cwd) setCwd((current) => current || data.cwd);
+      } catch {
+        if (!cancelled) setResumeLookup({ state: "missing" });
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [resumeId]);
+
   const handleClose = () => {
     onClose();
   };
@@ -382,6 +429,8 @@ export function NewSessionModal({
     if (!selectedAgent) return;
 
     setIsCreating(true);
+    setCreateError(null);
+    const resumeClaudeSessionId = selectedAgent.id === "claude" && resumeId.trim() ? resumeId.trim() : undefined;
 
     try {
       const workingDir = cwd || (isReplacing ? existingSession?.cwd : null) || launchCwd;
@@ -406,6 +455,7 @@ export function NewSessionModal({
             customName: customName || existingSession.customName,
             customColor: existingSession.customColor,
             initialPrompt: initialPrompt.trim() || undefined,
+            resumeClaudeSessionId,
             // Ticket info if selected (Linear or GitHub)
             ...(selectedTicket && {
               ticketId: selectedTicket.identifier,
@@ -426,6 +476,12 @@ export function NewSessionModal({
           }),
         });
 
+        if (res.status === 409) {
+          const { nodeId: openNodeId } = await res.json();
+          if (openNodeId) { setSelectedNodeId(openNodeId); setSidebarOpen(true); }
+          handleClose();
+          return;
+        }
         if (res.ok) {
           const { sessionId: newSessionId, gitBranch, cwd: newCwd } = await res.json();
           updateSession(existingNodeId, {
@@ -439,6 +495,7 @@ export function NewSessionModal({
             ticketId: selectedTicket?.identifier || (selectedGithubIssue ? `#${selectedGithubIssue.number}` : undefined),
             ticketTitle: selectedTicket?.title || selectedGithubIssue?.title,
             gitBranch: gitBranch || branchName || undefined,
+            claudeSessionId: resumeClaudeSessionId,
           });
         }
       } else {
@@ -473,6 +530,7 @@ export function NewSessionModal({
               nodeId,
               customName: count > 1 ? agentName : customName || undefined,
               initialPrompt: initialPrompt.trim() || undefined,
+              resumeClaudeSessionId: i === 0 ? resumeClaudeSessionId : undefined,
               // Ticket info if selected (only for first agent)
               ...(i === 0 && selectedTicket && {
                 ticketId: selectedTicket.identifier,
@@ -493,6 +551,16 @@ export function NewSessionModal({
             }),
           });
 
+          if (res.status === 409) {
+            const { nodeId: openNodeId } = await res.json();
+            if (openNodeId) { setSelectedNodeId(openNodeId); setSidebarOpen(true); }
+            handleClose();
+            return;
+          }
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.error || `HTTP ${res.status}`);
+          }
           const { sessionId, gitBranch, cwd: newCwd } = await res.json();
 
           const { x, y } = freePositions[i];
@@ -524,6 +592,7 @@ export function NewSessionModal({
             customName: count > 1 ? agentName : customName || undefined,
             ticketId: i === 0 ? (selectedTicket?.identifier || (selectedGithubIssue ? `#${selectedGithubIssue.number}` : undefined)) : undefined,
             ticketTitle: i === 0 ? (selectedTicket?.title || selectedGithubIssue?.title) : undefined,
+            claudeSessionId: i === 0 ? resumeClaudeSessionId : undefined,
           });
         }
       }
@@ -531,6 +600,7 @@ export function NewSessionModal({
       handleClose();
     } catch (error) {
       console.error("Failed to create session:", error);
+      setCreateError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsCreating(false);
     }
@@ -1007,6 +1077,37 @@ export function NewSessionModal({
                     />
                   </div>
 
+                  {/* Resume an existing Claude Code session */}
+                  {selectedAgent?.id === "claude" && (
+                    <div className="space-y-2">
+                      <label className="text-xs text-zinc-500 flex items-center gap-1.5">
+                        <RotateCcw className="w-3 h-3" />
+                        Resume Claude session ID (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={resumeId}
+                        onChange={(e) => setResumeId(e.target.value)}
+                        placeholder="e.g. 30cdb4b1-984a-4cee-9c45-26aa39bf3194"
+                        spellCheck={false}
+                        className="w-full px-3 py-2 rounded-md bg-canvas border border-border text-white text-sm placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors font-mono"
+                      />
+                      {resumeLookup.state === "checking" && (
+                        <p className="text-[10px] text-zinc-600">Looking up…</p>
+                      )}
+                      {resumeLookup.state === "found" && (
+                        <p className="text-[10px] text-green-500/80 font-mono truncate" title={resumeLookup.cwd}>
+                          {resumeLookup.openInNodeId
+                            ? "Already open in OpenUI — creating will select that node"
+                            : `Found${resumeLookup.cwd ? ` · ${resumeLookup.cwd}` : ""}`}
+                        </p>
+                      )}
+                      {resumeLookup.state === "missing" && (
+                        <p className="text-[10px] text-amber-500/80">Not found under ~/.claude/projects — will still try to resume</p>
+                      )}
+                    </div>
+                  )}
+
                   {/* Working directory */}
                   <div className="space-y-2">
                     <label className="text-xs text-zinc-500 flex items-center gap-1.5">
@@ -1119,7 +1220,10 @@ export function NewSessionModal({
                 </div>
 
                 {/* Footer */}
-                <div className="px-5 py-3 bg-canvas border-t border-border flex justify-end gap-2 flex-shrink-0">
+                <div className="px-5 py-3 bg-canvas border-t border-border flex items-center justify-end gap-2 flex-shrink-0">
+                  {createError && (
+                    <p className="text-xs text-red-400 mr-auto truncate" title={createError}>{createError}</p>
+                  )}
                   <button
                     onClick={handleClose}
                     className="px-3 py-1.5 rounded-md text-sm text-zinc-400 hover:text-white hover:bg-surface-active transition-colors"

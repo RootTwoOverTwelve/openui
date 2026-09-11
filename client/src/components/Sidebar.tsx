@@ -8,6 +8,9 @@ import {
   Edit3,
   RotateCcw,
   Play,
+  Copy,
+  Check,
+  LogOut,
   Sparkles,
   Code,
   Cpu,
@@ -18,7 +21,7 @@ import {
   Wand2,
   GitBranch,
 } from "lucide-react";
-import { useStore, AgentStatus } from "../stores/useStore";
+import { useStore, AgentStatus, SIDEBAR_WIDTH_KEY, SIDEBAR_DEFAULT_WIDTH } from "../stores/useStore";
 import { Terminal } from "./Terminal";
 
 const statusConfig: Record<AgentStatus, { label: string; color: string }> = {
@@ -29,23 +32,6 @@ const statusConfig: Record<AgentStatus, { label: string; color: string }> = {
   disconnected: { label: "Disconnected", color: "#EF4444" },
   error: { label: "Error", color: "#EF4444" },
 };
-
-const SIDEBAR_WIDTH_KEY = "openui-sidebar-width";
-const SIDEBAR_DEFAULT_WIDTH = 512;
-const SIDEBAR_MIN_WIDTH = 360;
-
-function loadSidebarWidth(): number {
-  try {
-    const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
-    if (saved >= SIDEBAR_MIN_WIDTH) return saved;
-  } catch {}
-  return SIDEBAR_DEFAULT_WIDTH;
-}
-
-function clampSidebarWidth(width: number): number {
-  const max = Math.max(SIDEBAR_MIN_WIDTH, Math.floor(window.innerWidth * 0.8));
-  return Math.min(max, Math.max(SIDEBAR_MIN_WIDTH, width));
-}
 
 const presetColors = [
   "#F97316", "#22C55E", "#3B82F6", "#8B5CF6", "#EC4899", "#EF4444", "#FBBF24", "#14B8A6"
@@ -74,6 +60,10 @@ export function Sidebar() {
     nodes,
     setNewSessionModalOpen,
     setNewSessionForNodeId,
+    sidebarWidth,
+    setSidebarWidth,
+    sidebarResizing: isResizing,
+    setSidebarResizing: setIsResizing,
   } = useStore();
 
   const session = selectedNodeId ? sessions.get(selectedNodeId) : null;
@@ -85,9 +75,6 @@ export function Sidebar() {
   const [editColor, setEditColor] = useState("");
   const [editIcon, setEditIcon] = useState("");
   const [terminalKey, setTerminalKey] = useState(0);
-  const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
-  const [isResizing, setIsResizing] = useState(false);
-
   // Drag the left edge to resize the panel
   const handleResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -96,7 +83,7 @@ export function Sidebar() {
     setIsResizing(true);
 
     const onMove = (ev: PointerEvent) => {
-      setSidebarWidth(clampSidebarWidth(window.innerWidth - ev.clientX));
+      setSidebarWidth(window.innerWidth - ev.clientX);
     };
     const onUp = () => {
       handle.removeEventListener("pointermove", onMove);
@@ -107,7 +94,7 @@ export function Sidebar() {
     handle.addEventListener("pointermove", onMove);
     handle.addEventListener("pointerup", onUp);
     handle.addEventListener("pointercancel", onUp);
-  }, []);
+  }, [setSidebarWidth, setIsResizing]);
 
   // Persist width once a drag finishes
   useEffect(() => {
@@ -132,10 +119,10 @@ export function Sidebar() {
 
   // Re-clamp if the window shrinks below the saved width
   useEffect(() => {
-    const onWindowResize = () => setSidebarWidth(w => clampSidebarWidth(w));
+    const onWindowResize = () => setSidebarWidth(w => w);
     window.addEventListener("resize", onWindowResize);
     return () => window.removeEventListener("resize", onWindowResize);
-  }, []);
+  }, [setSidebarWidth]);
 
   // Reset edit state when session changes (but NOT when nodes change)
   useEffect(() => {
@@ -187,6 +174,44 @@ export function Sidebar() {
       setResumeError(e instanceof Error ? e.message : String(e));
     } finally {
       setIsResuming(false);
+    }
+  };
+
+  // Command to continue this Claude session from a normal terminal
+  const resumeCommand = session?.claudeSessionId
+    ? `cd '${session.cwd.replace(/'/g, `'\\''`)}' && ${session.command} --resume ${session.claudeSessionId}`
+    : null;
+
+  const [copied, setCopied] = useState(false);
+  const [isDetaching, setIsDetaching] = useState(false);
+
+  const copyResumeCommand = async () => {
+    if (!resumeCommand) return false;
+    try {
+      await navigator.clipboard.writeText(resumeCommand);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Stop the PTY here so the session has a single live process, then hand
+  // the resume command to the clipboard. Copy first: clipboard access needs
+  // to stay close to the click.
+  const handleHandOff = async () => {
+    if (!selectedNodeId || !session || isDetaching) return;
+    setIsDetaching(true);
+    try {
+      await copyResumeCommand();
+      const res = await fetch(`/api/sessions/${session.sessionId}/detach`, { method: "POST" });
+      if (res.ok) {
+        updateSession(selectedNodeId, { status: "disconnected", isRestored: true });
+        setTerminalKey(k => k + 1);
+      }
+    } finally {
+      setIsDetaching(false);
     }
   };
 
@@ -506,17 +531,41 @@ export function Sidebar() {
                   </span>
                 </div>
               )}
-              {session.claudeSessionId && (
-                <div className="flex items-center gap-2 text-xs">
-                  <TerminalIcon className="w-3 h-3 text-zinc-600 flex-shrink-0" />
-                  <span className="text-zinc-500">Claude session</span>
-                  <button
-                    onClick={() => navigator.clipboard?.writeText(`claude --resume ${session.claudeSessionId}`).catch(() => {})}
-                    title={`Copy: claude --resume ${session.claudeSessionId}`}
-                    className="text-zinc-400 font-mono ml-auto truncate max-w-[220px] hover:text-white transition-colors"
+              {resumeCommand && (
+                <div className="pt-3 mt-3 border-t border-border space-y-2">
+                  <div className="flex items-center gap-2 text-xs">
+                    <TerminalIcon className="w-3 h-3 text-zinc-600 flex-shrink-0" />
+                    <span className="text-zinc-500">Continue in terminal</span>
+                    <span className="text-zinc-600 font-mono ml-auto truncate max-w-[200px]" title={session.claudeSessionId}>
+                      {session.claudeSessionId}
+                    </span>
+                  </div>
+                  <code
+                    className="block text-[11px] text-zinc-400 font-mono bg-canvas border border-border rounded px-2 py-1.5 whitespace-pre-wrap break-all select-all"
+                    title={resumeCommand}
                   >
-                    {session.claudeSessionId}
-                  </button>
+                    {resumeCommand}
+                  </code>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={copyResumeCommand}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md bg-surface-active text-zinc-300 text-xs hover:bg-zinc-700 transition-colors"
+                    >
+                      {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+                      {copied ? "Copied" : "Copy"}
+                    </button>
+                    {!isDisconnected && (
+                      <button
+                        onClick={handleHandOff}
+                        disabled={isDetaching}
+                        title="Stops the agent here (resumable later) and copies the command, so only one process runs this session"
+                        className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md bg-surface-active text-zinc-300 text-xs hover:bg-zinc-700 disabled:opacity-60 transition-colors"
+                      >
+                        <LogOut className="w-3 h-3" />
+                        {isDetaching ? "Stopping…" : "Hand off to terminal"}
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

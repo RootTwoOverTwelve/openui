@@ -5,7 +5,7 @@ import { useStore } from "../stores/useStore";
 const CATEGORY_COLORS = ["#F97316", "#22C55E", "#3B82F6", "#8B5CF6", "#EC4899", "#14B8A6"];
 
 export function CanvasControls() {
-  const { setAddAgentModalOpen, nodes, addNode } = useStore();
+  const { setAddAgentModalOpen, nodes, addNode, sidebarOpen, sidebarWidth, sidebarResizing } = useStore();
 
   const handleAddAgent = () => {
     setAddAgentModalOpen(true);
@@ -53,7 +53,13 @@ export function CanvasControls() {
   };
 
   return (
-    <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-2">
+    <motion.div
+      // Stay just left of the session panel so the buttons are never covered
+      initial={false}
+      animate={{ right: sidebarOpen ? sidebarWidth + 16 : 16 }}
+      transition={sidebarResizing ? { duration: 0 } : { type: "spring", stiffness: 400, damping: 40 }}
+      className="absolute bottom-4 z-10 flex flex-col gap-2"
+    >
       <motion.button
         onClick={handleAddCategory}
         className="w-10 h-10 rounded-full bg-surface border border-border shadow-lg flex items-center justify-center text-zinc-400 hover:text-white hover:bg-surface-hover transition-colors"
@@ -72,6 +78,6 @@ export function CanvasControls() {
       >
         <Plus className="w-6 h-6" />
       </motion.button>
-    </div>
+    </motion.div>
   );
 }

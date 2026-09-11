@@ -12,6 +12,24 @@ export interface Agent {
 
 export type AgentStatus = "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error";
 
+// Session panel width, persisted per browser
+export const SIDEBAR_WIDTH_KEY = "openui-sidebar-width";
+export const SIDEBAR_DEFAULT_WIDTH = 512;
+export const SIDEBAR_MIN_WIDTH = 360;
+
+export function clampSidebarWidth(width: number): number {
+  const max = Math.max(SIDEBAR_MIN_WIDTH, Math.floor(window.innerWidth * 0.8));
+  return Math.min(max, Math.max(SIDEBAR_MIN_WIDTH, width));
+}
+
+function loadSidebarWidth(): number {
+  try {
+    const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    if (saved >= SIDEBAR_MIN_WIDTH) return clampSidebarWidth(saved);
+  } catch {}
+  return SIDEBAR_DEFAULT_WIDTH;
+}
+
 export interface AgentSession {
   id: string;
   sessionId: string;
@@ -66,6 +84,10 @@ interface AppState {
   setSelectedNodeId: (id: string | null) => void;
   sidebarOpen: boolean;
   setSidebarOpen: (open: boolean) => void;
+  sidebarWidth: number;
+  setSidebarWidth: (width: number | ((w: number) => number)) => void;
+  sidebarResizing: boolean;
+  setSidebarResizing: (resizing: boolean) => void;
   addAgentModalOpen: boolean;
   setAddAgentModalOpen: (open: boolean) => void;
   newSessionModalOpen: boolean;
@@ -127,6 +149,13 @@ export const useStore = create<AppState>((set) => ({
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
   sidebarOpen: false,
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
+  sidebarWidth: loadSidebarWidth(),
+  setSidebarWidth: (width) =>
+    set((state) => ({
+      sidebarWidth: clampSidebarWidth(typeof width === "function" ? width(state.sidebarWidth) : width),
+    })),
+  sidebarResizing: false,
+  setSidebarResizing: (resizing) => set({ sidebarResizing: resizing }),
   addAgentModalOpen: false,
   setAddAgentModalOpen: (open) => set({ addAgentModalOpen: open }),
   newSessionModalOpen: false,

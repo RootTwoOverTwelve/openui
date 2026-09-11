@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { spawn as spawnPty } from "bun-pty";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "fs";
 import { join, basename } from "path";
 import { homedir } from "os";
 import type { Session } from "../types";
@@ -42,6 +42,31 @@ export function getUserShell(): { file: string; args: string[] } {
   const shell = process.env.SHELL;
   const file = shell && existsSync(shell) ? shell : "/bin/bash";
   return { file, args: ["-l"] };
+}
+
+// Find a Claude Code transcript by session ID without scanning contents:
+// ~/.claude/projects/<encoded-cwd>/<id>.jsonl. The directory name is a
+// lossy encoding of the cwd, so read the real one from the first records.
+export function findClaudeSession(id: string): { cwd?: string; transcriptPath: string; lastModified: string } | null {
+  if (!/^[0-9a-f-]{8,64}$/i.test(id)) return null;
+  const projectsDir = join(homedir(), ".claude", "projects");
+  if (!existsSync(projectsDir)) return null;
+  for (const dir of readdirSync(projectsDir)) {
+    const transcriptPath = join(projectsDir, dir, `${id}.jsonl`);
+    if (!existsSync(transcriptPath)) continue;
+    let cwd: string | undefined;
+    try {
+      const head = readFileSync(transcriptPath, "utf-8").split("\n", 20);
+      for (const line of head) {
+        try {
+          const rec = JSON.parse(line);
+          if (typeof rec.cwd === "string") { cwd = rec.cwd; break; }
+        } catch {}
+      }
+    } catch {}
+    return { cwd, transcriptPath, lastModified: statSync(transcriptPath).mtime.toISOString() };
+  }
+  return null;
 }
 
 // Wrap a string in single quotes for the shell
@@ -259,6 +284,8 @@ export function createSession(params: {
   createWorktreeFlag?: boolean;
   ticketPromptTemplate?: string;
   initialPrompt?: string;
+  // Attach to an existing Claude Code session instead of starting a new one
+  resumeClaudeSessionId?: string;
 }): { session: Session; cwd: string; gitBranch?: string } {
   const {
     sessionId,
@@ -277,6 +304,7 @@ export function createSession(params: {
     createWorktreeFlag,
     ticketPromptTemplate,
     initialPrompt,
+    resumeClaudeSessionId,
   } = params;
 
   let workingDir = originalCwd;
@@ -355,6 +383,7 @@ export function createSession(params: {
     ticketTitle,
     ticketUrl,
     initialPrompt: initialPrompt?.trim() || undefined,
+    claudeSessionId: resumeClaudeSessionId || undefined,
   };
 
   sessions.set(sessionId, session);
@@ -387,7 +416,10 @@ export function createSession(params: {
   });
 
   // Run the command (inject plugin-dir for Claude if available)
-  const launch = buildLaunch({ sessionId, agentId, command, initialPrompt: session.initialPrompt });
+  const launchCommand = resumeClaudeSessionId && agentId === "claude"
+    ? `${command} --resume ${resumeClaudeSessionId}`
+    : command;
+  const launch = buildLaunch({ sessionId, agentId, command: launchCommand, initialPrompt: session.initialPrompt });
   const finalCommand = launch.command;
   debug(`\x1b[38;5;82m[pty-write]\x1b[0m Writing command: ${finalCommand}`);
   setTimeout(() => {

@@ -34,7 +34,14 @@ app.use("*", async (c, next) => {
 // API Routes
 app.route("/api", apiRoutes);
 
-// Serve static files
+// Serve static files. Asset filenames are content-hashed, so only the HTML
+// shell must be revalidated; otherwise a rebuilt UI needs a hard refresh.
+app.use("/*", async (c, next) => {
+  await next();
+  if (c.res.headers.get("content-type")?.includes("text/html")) {
+    c.res.headers.set("Cache-Control", "no-cache");
+  }
+});
 app.use("/*", serveStatic({ root: "./client/dist" }));
 
 // WebSocket server

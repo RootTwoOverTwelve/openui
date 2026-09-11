@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, buildLaunch, getUserShell } from "../services/sessionManager";
+import { sessions, createSession, deleteSession, buildLaunch, getUserShell, findClaudeSession } from "../services/sessionManager";
 import { loadState, saveState, savePositions, getDataDir } from "../services/persistence";
 import { debug } from "../services/log";
 import {
@@ -94,6 +94,18 @@ apiRoutes.get("/agents", (c) => {
   return c.json(agents);
 });
 
+// Look up one Claude Code session by ID (for attaching an existing session)
+apiRoutes.get("/claude/sessions/:id", (c) => {
+  const id = c.req.param("id");
+  const found = findClaudeSession(id);
+  if (!found) return c.json({ found: false }, 404);
+  let openInNodeId: string | undefined;
+  for (const [, s] of sessions) {
+    if (s.claudeSessionId === id) { openInNodeId = s.nodeId; break; }
+  }
+  return c.json({ found: true, ...found, openInNodeId });
+});
+
 apiRoutes.get("/sessions", (c) => {
   const sessionList = Array.from(sessions.entries()).map(([id, session]) => {
     return {
@@ -178,7 +190,18 @@ apiRoutes.post("/sessions", async (c) => {
     baseBranch,
     createWorktree: createWorktreeFlag,
     initialPrompt,
+    resumeClaudeSessionId,
   } = body;
+
+  // One live process per Claude session: if it's already attached to a
+  // node here, point the client at that node instead of spawning another.
+  if (resumeClaudeSessionId) {
+    for (const [existingId, s] of sessions) {
+      if (s.claudeSessionId === resumeClaudeSessionId && s.pty) {
+        return c.json({ error: "That Claude session is already running in OpenUI", sessionId: existingId, nodeId: s.nodeId }, 409);
+      }
+    }
+  }
 
   const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   const workingDir = cwd || LAUNCH_CWD;
@@ -204,6 +227,7 @@ apiRoutes.post("/sessions", async (c) => {
     createWorktreeFlag,
     ticketPromptTemplate,
     initialPrompt,
+    resumeClaudeSessionId,
   });
 
   saveState(sessions);
@@ -295,6 +319,29 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
   return c.json({ success: true, resumed: canResume });
 });
 
+// Stop the PTY but keep the node, so the Claude session can be resumed
+// elsewhere (a terminal) or back here later. Mirrors what a server restart
+// does to a session.
+apiRoutes.post("/sessions/:sessionId/detach", (c) => {
+  const sessionId = c.req.param("sessionId");
+  const session = sessions.get(sessionId);
+  if (!session) return c.json({ error: "Session not found" }, 404);
+  if (!session.pty) return c.json({ success: true, alreadyDetached: true });
+
+  session.pty.kill();
+  session.pty = null;
+  session.isRestored = true;
+  session.status = "disconnected";
+  for (const client of session.clients) {
+    if (client.readyState === 1) {
+      client.send(JSON.stringify({ type: "status", status: session.status, isRestored: true }));
+    }
+  }
+  saveState(sessions);
+  log(`\x1b[38;5;141m[session]\x1b[0m Detached ${sessionId}${session.claudeSessionId ? ` (claude: ${session.claudeSessionId})` : ""}`);
+  return c.json({ success: true });
+});
+
 apiRoutes.patch("/sessions/:sessionId", async (c) => {
   const sessionId = c.req.param("sessionId");
   const session = sessions.get(sessionId);
@@ -357,6 +404,13 @@ apiRoutes.post("/status-update", async (c) => {
     if (claudeSessionId && session.claudeSessionId !== claudeSessionId) {
       session.claudeSessionId = claudeSessionId;
       saveState(sessions);
+    }
+
+    // No PTY means OpenUI isn't attached (detached, or restored after a
+    // restart). Hooks from a dying process or a terminal copy of the same
+    // session must not make the node look live here.
+    if (!session.pty) {
+      return c.json({ success: true, ignored: "detached" });
     }
 
     // Handle pre_tool/post_tool for permission detection
