@@ -6,7 +6,7 @@
 set -e
 
 INSTALL_DIR="$HOME/.openui/claude-code-plugin"
-GITHUB_RAW="https://raw.githubusercontent.com/Fallomai/openui/main/claude-code-plugin"
+GITHUB_RAW="https://raw.githubusercontent.com/RootTwoOverTwelve/openui/main/claude-code-plugin"
 
 echo "Installing OpenUI Status Plugin for Claude Code..."
 

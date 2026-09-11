@@ -1,161 +1,80 @@
 # OpenUI
 
-
 https://github.com/user-attachments/assets/0a1979ab-f093-447d-8fe7-bcf6830051ee
 
+A canvas for running several AI coding agents in parallel. Each agent is a node with a live terminal, status, and context usage; drag them into groups, fork them, archive them, and pick any of them back up after a restart.
 
-**Your AI Agent Command Center**
-
-Manage multiple AI coding agents working in parallel on an infinite canvas. See what each agent is working on, their status, and jump in when they need help.
-
-## The Problem
-
-You want to run 8 Claude agents simultaneously - each working on a different ticket, in isolated branches. But:
-- Terminal tabs are chaos
-- You can't see who's stuck at a glance
-- Context switching is painful
-- No way to organize by project/team
-
-## The Solution
-
-OpenUI gives you a visual command center where each agent is a node on a canvas:
-
-- **At-a-glance status**: See which agents are working, idle, or need input
-- **Ticket integration**: Start sessions from Linear tickets (more integrations coming)
-- **Branch isolation**: Each agent works in its own git worktree
-- **Organized workspace**: Categories, custom colors, drag-and-drop layout
+This is a personal fork of [Fallomai/openui](https://github.com/Fallomai/openui). It is not published to npm and is not meant to be merged back. See [What this fork adds](#what-this-fork-adds).
 
 ## Installation
 
+Requires [Bun](https://bun.sh) and [Claude Code](https://docs.anthropic.com/en/docs/claude-code) on your PATH.
+
 ```bash
-# Install globally
-npm install -g @fallom/openui
+git clone https://github.com/RootTwoOverTwelve/openui.git
+cd openui
+bun install
+cd client && bun install && cd ..
+bun run build          # builds the web client into client/dist
+
+bun link               # makes the `openui` command available globally
+```
+
+`bun link` puts the command in `~/.bun/bin`. If `which openui` comes back empty, add that directory to your PATH:
+
+```bash
+echo 'export PATH="$HOME/.bun/bin:$PATH"' >> ~/.zshrc && exec zsh
+```
+
+To update: `git pull && bun run build`.
+
+## Quick start
+
+```bash
+cd your-project
 openui
-
-# Or run without installing
-npx @fallom/openui
-bunx @fallom/openui
 ```
 
-## Quick Start
+The browser opens at `http://localhost:6969`. **New Agent** spawns a Claude Code session in that directory; click a node to open its terminal.
 
-1. Run `openui` in your project directory
-2. Browser opens at `http://localhost:6969`
-3. Click "+" to spawn agents (Claude Code, OpenCode, or Ralph Loop)
-4. Click any node to open its terminal
-5. Drag nodes to organize, create categories to group them
+The server binds to `127.0.0.1` only and rejects requests from other origins, so it is not reachable from other machines or from other web pages.
 
-## Features
+On first run the Claude Code plugin is copied to `~/.openui/claude-code-plugin/` — it reports status, context, and briefings back to OpenUI through Claude Code hooks. It is only fetched when missing, so after pulling a change to `claude-code-plugin/hooks/`, re-sync it by hand:
 
-### Canvas Management
-- Infinite canvas for organizing agents
-- Drag-and-drop positioning with snap-to-grid
-- Categories (folders) for grouping agents by team/project with persistent sizing
-- Custom names, colors, and icons per agent
-- Persistent layout across restarts
-
-### Agent Monitoring
-- Real-time status: Running, Idle, Needs Input, Tool Calling
-- Git branch display per agent
-- Directory/repo info
-- Redesigned node cards for better at-a-glance visibility
-
-### Session Management
-- Spawn multiple agents at once (placed in horizontal row beside existing nodes)
-- Restart sessions with custom arguments
-- Session persistence and restore
-- Version check and empty state UI
-
-### Coming Soon: Linear Integration
-- Start sessions directly from Linear tickets
-- Auto-create isolated branches per ticket
-- Git worktree support for parallel work
-- Ticket info displayed on agent nodes
-
-## How It Works
-
-```
-┌─────────────────────────────────────────────────────┐
-│                    OpenUI Canvas                     │
-│  ┌─────────┐  ┌─────────┐  ┌─────────┐             │
-│  │ Agent 1 │  │ Agent 2 │  │ Agent 3 │             │
-│  │ PROJ-12 │  │ PROJ-34 │  │  IDLE   │             │
-│  │ Working │  │ Waiting │  │         │             │
-│  └─────────┘  └─────────┘  └─────────┘             │
-│                                                      │
-│  ┌─ Frontend Team ──────────────────────┐           │
-│  │  ┌─────────┐  ┌─────────┐           │           │
-│  │  │ Agent 4 │  │ Agent 5 │           │           │
-│  │  └─────────┘  └─────────┘           │           │
-│  └──────────────────────────────────────┘           │
-└─────────────────────────────────────────────────────┘
+```bash
+cp claude-code-plugin/hooks/* ~/.openui/claude-code-plugin/hooks/
 ```
 
-OpenUI runs a local server that:
-- Spawns PTY sessions for each AI agent
-- Tracks agent state via terminal output parsing
-- Streams terminal I/O over WebSocket
-- Persists everything to `.openui/` in your project
+## What this fork adds
 
-## Tech Stack
+**Sessions survive everything.** Claude Code's session ID is captured from the plugin hooks and persisted, so after a server restart or a closed laptop every node comes back **Disconnected** with a one-click **Resume** that continues the same conversation (`claude --resume`). State is saved on SIGINT, SIGTERM and SIGHUP.
 
-- **Runtime**: Bun
-- **Backend**: Hono + WebSockets + bun-pty
-- **Frontend**: React + React Flow + xterm.js + Framer Motion
-- **State**: Zustand
+**Move between OpenUI and a terminal.** Each panel shows the exact `cd … && claude --resume <id>` command with **Copy** and **Hand off to terminal** (which stops the process here first, so only one process ever runs a session). The reverse works too: **New Agent** accepts an existing Claude session ID and attaches to it.
+
+**Fork a session.** Right-click → **Fork…** starts a new agent with the parent's full conversation under a new session ID (`--fork-session`); the parent keeps running. Two kinds: *Consult* (brainstorm/research, read-only by convention) and *Develop* (will edit, warned about sharing a worktree). The fork's briefing is delivered through the plugin's `SessionStart` hook so it survives restarts and compaction, and the optional heads-up to the parent is sent only after the fork has booted so the fork can't inherit it.
+
+**Archive.** Right-click → **Archive** parks a session off the canvas; the header's archive button lists them with **Restore** and **Delete**. Delete only removes OpenUI's record — Claude Code's transcript is never touched.
+
+**Real groups.** Drop an agent into a category and it moves with the category. Positions are stored absolute on disk with the group as an annotation, so nothing can ever be displaced by a lost link.
+
+**At-a-glance load.** Every card shows a **Context** bar (read from the transcript: exactly what `/compact` acts on) and a subagent badge. The panel has a tab strip for a session's subagents with a read-only, live-updating view of each one's transcript.
+
+**Quality of life.** Resizable panel with the canvas buttons sliding out of its way; optional initial prompt when spawning; the open session in the URL (`#/session/<id>`); pan/zoom and layout persisted; collapsible details footer; `OPENUI_DEBUG=1` for verbose logs (raw hook payloads are no longer logged by default, nor written to `/tmp`).
 
 ## Development
 
 ```bash
-git clone https://github.com/Fallomai/openui.git
-cd openui
-
-bun install
-cd client && bun install && cd ..
-
-bun run dev  # Server on 4242, UI on 6969
+bun run dev      # server on 6968 with --watch, Vite UI on 6969 proxying to it
+bun run start    # production: serves the built client on 6969
 ```
 
-### Testing with the Claude Code Plugin
+`bun run dev` restarts the server on every server-file save, which kills every agent PTY. When developing OpenUI *from inside* OpenUI, use `bun run start` and restart it by hand between server changes; client changes only need `bun run build` and a reload.
 
-For development, OpenUI automatically loads the plugin from the repo's `claude-code-plugin/` directory if present. Just run `bun run dev` and the plugin will be injected when spawning Claude agents.
+The plugin is loaded from `~/.openui/claude-code-plugin/` if present, else from the repo's `claude-code-plugin/`.
 
-You can also test manually:
-```bash
-claude --plugin-dir $(pwd)/claude-code-plugin
-```
+## Tech stack
 
-## Requirements
-
-- Bun 1.0+
-- One of: Claude Code, OpenCode, or Ralph Loop
-
-### Claude Code Plugin (Auto-installed)
-
-OpenUI automatically pulls and installs the Claude Code plugin when you run it for the first time. This enables precise status detection (Working, Using Tools, Idle, Waiting for Input) via Claude Code hooks instead of terminal output parsing.
-
-No manual installation required - just run `openui` and the plugin is set up automatically.
-
-See [claude-code-plugin/README.md](./claude-code-plugin/README.md) for more details.
-
-### Optional: Ralph Loop
-
-[Ralph](https://github.com/frankbria/ralph-claude-code) is an autonomous development loop that runs Claude Code repeatedly until all tasks are complete. To use it with OpenUI:
-
-```bash
-# Install Ralph globally
-git clone https://github.com/frankbria/ralph-claude-code.git
-cd ralph-claude-code
-./install.sh
-
-# In your project, set up Ralph
-cd your-project
-ralph-setup .
-
-# Then select "Ralph Loop" when creating an agent in OpenUI
-```
-
-Ralph includes rate limiting, circuit breakers, and intelligent exit detection to prevent runaway loops.
+Bun · Hono · bun-pty · React · React Flow · xterm.js · Zustand
 
 ## License
 

@@ -6,12 +6,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Fallomai/openui.git"
+    "url": "git+https://github.com/RootTwoOverTwelve/openui.git"
   },
   "bugs": {
-    "url": "https://github.com/Fallomai/openui/issues"
+    "url": "https://github.com/RootTwoOverTwelve/openui/issues"
   },
-  "homepage": "https://github.com/Fallomai/openui#readme",
+  "homepage": "https://github.com/RootTwoOverTwelve/openui#readme",
   "keywords": [
     "ai",
     "coding-agent",

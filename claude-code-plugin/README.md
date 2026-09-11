@@ -8,7 +8,7 @@ Reports Claude Code agent status to OpenUI in real-time for accurate status disp
 
 **Manual (if needed):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Fallomai/openui/main/claude-code-plugin/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/RootTwoOverTwelve/openui/main/claude-code-plugin/install.sh | bash
 ```
 
 This installs to `~/.openui/claude-code-plugin/`. OpenUI automatically uses it when starting Claude agents.

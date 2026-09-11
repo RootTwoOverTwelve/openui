@@ -49,7 +49,8 @@ async function ensurePluginInstalled() {
 // Check for updates (non-blocking)
 async function checkForUpdates() {
   try {
-    const res = await fetch("https://registry.npmjs.org/@fallom/openui/latest", {
+    // This fork isn't published to npm; compare against the repo instead
+    const res = await fetch("https://raw.githubusercontent.com/RootTwoOverTwelve/openui/main/package.json", {
       signal: AbortSignal.timeout(3000)
     });
     if (!res.ok) return;
@@ -59,7 +60,7 @@ async function checkForUpdates() {
 
     if (latestVersion && latestVersion !== CURRENT_VERSION) {
       console.log(`\x1b[33m  Update available: ${CURRENT_VERSION} → ${latestVersion}\x1b[0m`);
-      console.log(`\x1b[38;5;245m  Run: npm install -g @fallom/openui\x1b[0m\n`);
+      console.log(`\x1b[38;5;245m  Run: git -C ${import.meta.dir}/.. pull && bun run build\x1b[0m\n`);
     }
   } catch {
     // Silently ignore - don't block startup for version check
