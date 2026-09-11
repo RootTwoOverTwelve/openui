@@ -63,6 +63,8 @@ export interface AgentSession {
   model?: string;
   // Live context size vs the model's window, read from the transcript
   contextUsage?: { tokens: number; limit: number; pct: number; at: string };
+  // Subagents this session has spawned
+  subagents?: { total: number; running: number };
 }
 
 interface AppState {

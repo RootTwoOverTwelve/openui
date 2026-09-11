@@ -29,6 +29,19 @@ import { contextColor } from "./AgentNode/AgentNodeCard";
 
 const DETAILS_OPEN_KEY = "openui-sidebar-details-open";
 import { Terminal } from "./Terminal";
+import { SubagentView } from "./SubagentView";
+
+interface SubagentSummary {
+  agentId: string;
+  description: string;
+  agentType: string;
+  model?: string;
+  startedAt: string;
+  lastActive: string;
+  running: boolean;
+  turns: number;
+  tokens: number;
+}
 
 const statusConfig: Record<AgentStatus, { label: string; color: string }> = {
   running: { label: "Running", color: "#22C55E" },
@@ -81,6 +94,31 @@ export function Sidebar() {
   const [editColor, setEditColor] = useState("");
   const [editIcon, setEditIcon] = useState("");
   const [terminalKey, setTerminalKey] = useState(0);
+
+  // Subagents spawned by this session; polled while the panel is open so
+  // the strip appears as soon as the first one starts
+  const [subagents, setSubagents] = useState<SubagentSummary[]>([]);
+  const [viewedAgentId, setViewedAgentId] = useState<string | null>(null);
+  useEffect(() => {
+    setSubagents([]);
+    setViewedAgentId(null);
+    if (!session?.sessionId) return;
+    let cancelled = false;
+    const sid = session.sessionId;
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/sessions/${sid}/subagents`);
+        if (!cancelled && res.ok) setSubagents(await res.json());
+      } catch {}
+    };
+    load();
+    const interval = setInterval(load, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [session?.sessionId]);
+  const viewedAgent = viewedAgentId ? subagents.find((a) => a.agentId === viewedAgentId) : undefined;
   const [detailsOpen, setDetailsOpen] = useState<boolean>(() => {
     try { return localStorage.getItem(DETAILS_OPEN_KEY) === "1"; } catch { return false; }
   });
@@ -487,9 +525,9 @@ export function Sidebar() {
             )}
           </AnimatePresence>
 
-          {/* Terminal */}
+          {/* Terminal, or a subagent's transcript in its place */}
           <div className="flex-1 flex flex-col min-h-0">
-            <div className="flex-1 min-h-0 bg-[#0d0d0d]">
+            <div className={`flex-1 min-h-0 bg-[#0d0d0d] ${viewedAgent ? "hidden" : ""}`}>
               <Terminal
                 key={`${session.sessionId}-${terminalKey}`}
                 sessionId={session.sessionId}
@@ -497,7 +535,47 @@ export function Sidebar() {
                 nodeId={selectedNodeId!}
               />
             </div>
+            {viewedAgent && (
+              <SubagentView
+                sessionId={session.sessionId}
+                agentId={viewedAgent.agentId}
+                description={viewedAgent.description}
+                agentType={viewedAgent.agentType}
+                running={viewedAgent.running}
+                onBack={() => setViewedAgentId(null)}
+              />
+            )}
 
+            {/* Subagent strip: only when this session has spawned any */}
+            {subagents.length > 0 && (
+              <div className="flex-shrink-0 border-t border-border bg-canvas-dark flex items-stretch overflow-x-auto">
+                <button
+                  onClick={() => setViewedAgentId(null)}
+                  className={`px-3 py-1.5 text-[11px] whitespace-nowrap border-b-2 transition-colors ${
+                    !viewedAgent ? "border-zinc-300 text-white" : "border-transparent text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  Main
+                </button>
+                {subagents.map((a) => {
+                  const active = viewedAgentId === a.agentId;
+                  return (
+                    <button
+                      key={a.agentId}
+                      onClick={() => setViewedAgentId(a.agentId)}
+                      title={`${a.agentType}${a.model ? ` · ${a.model}` : ""} · ${a.turns} turns · started ${new Date(a.startedAt).toLocaleTimeString()}`}
+                      className={`px-3 py-1.5 text-[11px] whitespace-nowrap border-b-2 flex items-center gap-1.5 max-w-[220px] transition-colors ${
+                        active ? "border-zinc-300 text-white" : "border-transparent text-zinc-500 hover:text-zinc-300"
+                      }`}
+                    >
+                      <Bot className="w-3 h-3 flex-shrink-0" />
+                      <span className="truncate">{a.description}</span>
+                      {a.running && <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Details (collapsed by default to leave room for the terminal) */}

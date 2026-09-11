@@ -197,6 +197,10 @@ function AppContent() {
               if (existing && sessionData.contextUsage && existing.contextUsage?.at !== sessionData.contextUsage.at) {
                 updateSession(sessionData.nodeId, { contextUsage: sessionData.contextUsage, model: sessionData.model });
               }
+              const sub = sessionData.subagents;
+              if (existing && (sub?.total !== existing.subagents?.total || sub?.running !== existing.subagents?.running)) {
+                updateSession(sessionData.nodeId, { subagents: sub });
+              }
             }
           }
         }
@@ -281,6 +285,7 @@ function AppContent() {
             forkKind: session.forkKind,
             model: session.model,
             contextUsage: session.contextUsage,
+            subagents: session.subagents,
           });
 
           restoredNodes.push({

@@ -72,6 +72,7 @@ export const AgentNode = ({ id, data, selected }: NodeProps) => {
           ticketId={session?.ticketId}
           ticketTitle={session?.ticketTitle}
           contextUsage={session?.contextUsage}
+          subagents={session?.subagents}
         />
       </motion.div>
 

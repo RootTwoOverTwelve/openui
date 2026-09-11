@@ -1,4 +1,4 @@
-import { MessageSquare, WifiOff, GitBranch, Folder, Wrench } from "lucide-react";
+import { MessageSquare, WifiOff, GitBranch, Folder, Wrench, Bot } from "lucide-react";
 import { AgentStatus } from "../../stores/useStore";
 
 // Status config with visual priority levels
@@ -47,6 +47,7 @@ interface AgentNodeCardProps {
   ticketId?: string;
   ticketTitle?: string;
   contextUsage?: { tokens: number; limit: number; pct: number };
+  subagents?: { total: number; running: number };
 }
 
 export function AgentNodeCard({
@@ -63,6 +64,7 @@ export function AgentNodeCard({
   ticketId,
   ticketTitle,
   contextUsage,
+  subagents,
 }: AgentNodeCardProps) {
   // agentId is available for future use if needed
   void agentId;
@@ -158,12 +160,23 @@ export function AgentNodeCard({
             </span>
           )}
         </div>
+        <div className="flex items-center gap-2">
+          {subagents && subagents.total > 0 && (
+            <span
+              className={`flex items-center gap-1 text-[10px] ${subagents.running ? "text-green-400" : "text-zinc-500"}`}
+              title={`${subagents.total} subagent${subagents.total === 1 ? "" : "s"}${subagents.running ? `, ${subagents.running} running` : ""}`}
+            >
+              <Bot className="w-3 h-3" />
+              {subagents.running ? `${subagents.running}/${subagents.total}` : subagents.total}
+            </span>
+          )}
         {status === "waiting_input" && (
           <MessageSquare className="w-3.5 h-3.5" style={{ color: statusInfo.color }} />
         )}
         {status === "disconnected" && (
           <WifiOff className="w-3.5 h-3.5" style={{ color: statusInfo.color }} />
         )}
+        </div>
       </div>
 
       <div className="p-3 relative">

@@ -4,6 +4,7 @@ import { sessions, createSession, deleteSession, buildLaunch, resumeFlags, getUs
 import { loadState, saveState, savePositions, writeState, sessionToNode, getDataDir, type NodePlacement } from "../services/persistence";
 import { debug } from "../services/log";
 import { readContextUsage } from "../services/context";
+import { listSubagents, readSubagentTranscript, subagentCounts } from "../services/subagents";
 import {
   loadConfig,
   saveConfig,
@@ -95,6 +96,22 @@ apiRoutes.get("/agents", (c) => {
   return c.json(agents);
 });
 
+// Subagents spawned by a session (read-only views of their transcripts)
+apiRoutes.get("/sessions/:sessionId/subagents", (c) => {
+  const session = sessions.get(c.req.param("sessionId"));
+  if (!session) return c.json({ error: "Session not found" }, 404);
+  return c.json(listSubagents(session.transcriptPath));
+});
+
+apiRoutes.get("/sessions/:sessionId/subagents/:agentId", (c) => {
+  const session = sessions.get(c.req.param("sessionId"));
+  if (!session) return c.json({ error: "Session not found" }, 404);
+  if (!session.transcriptPath) return c.json({ error: "No transcript yet" }, 404);
+  const messages = readSubagentTranscript(session.transcriptPath, c.req.param("agentId"));
+  if (!messages) return c.json({ error: "Subagent not found" }, 404);
+  return c.json({ messages });
+});
+
 // Look up one Claude Code session by ID (for attaching an existing session)
 apiRoutes.get("/claude/sessions/:id", (c) => {
   const id = c.req.param("id");
@@ -133,6 +150,7 @@ apiRoutes.get("/sessions", (c) => {
       forkKind: session.forkKind,
       model: session.model,
       contextUsage: session.contextUsage,
+      subagents: subagentCounts(session.transcriptPath),
     };
   });
   return c.json(sessionList);
