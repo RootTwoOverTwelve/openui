@@ -70,7 +70,7 @@ const NODE_HEIGHT = 120;
 const SPACING = 24; // Grid snap size
 
 // Find a free position near the target that doesn't overlap existing nodes
-function findFreePosition(
+export function findFreePosition(
   targetX: number,
   targetY: number,
   existingNodes: { position?: { x: number; y: number } }[],

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "fs";
 import { join } from "path";
-import type { PersistedState, Session } from "../types";
+import type { PersistedState, PersistedNode, Session } from "../types";
 import { debug } from "./log";
 
 // Use local .openui folder where user ran openui from
@@ -37,31 +37,14 @@ export function saveState(sessions: Map<string, Session>) {
 
   // Preserve categories from existing state
   const state: PersistedState = {
-    nodes: [],
+    nodes: savedState.nodes.filter(n => n.archivedAt),
     categories: savedState.categories || [],
   };
 
   for (const [sessionId, session] of sessions) {
     // Preserve existing position if we have one
     const existingNode = savedState.nodes.find(n => n.sessionId === sessionId);
-
-    state.nodes.push({
-      nodeId: session.nodeId,
-      sessionId,
-      agentId: session.agentId,
-      agentName: session.agentName,
-      command: session.command,
-      cwd: session.cwd,
-      createdAt: session.createdAt,
-      customName: session.customName,
-      customColor: session.customColor,
-      notes: session.notes,
-      icon: session.icon,
-      position: session.position || existingNode?.position || { x: 0, y: 0 },
-      claudeSessionId: session.claudeSessionId,
-      initialPrompt: session.initialPrompt,
-    });
-
+    state.nodes.push(sessionToNode(sessionId, session, existingNode));
     saveBuffer(sessionId, session.outputBuffer);
   }
 
@@ -72,7 +55,31 @@ export function saveState(sessions: Map<string, Session>) {
   }
 }
 
-export function savePositions(positions: Record<string, { x: number; y: number }>) {
+export type NodePlacement = { x: number; y: number; parentId?: string | null };
+
+export function sessionToNode(sessionId: string, session: Session, existing?: PersistedNode): PersistedNode {
+  return {
+    nodeId: session.nodeId,
+    sessionId,
+    agentId: session.agentId,
+    agentName: session.agentName,
+    command: session.command,
+    cwd: session.cwd,
+    createdAt: session.createdAt,
+    customName: session.customName,
+    customColor: session.customColor,
+    notes: session.notes,
+    position: session.position || existing?.position || { x: 0, y: 0 },
+    parentId: session.parentId,
+    claudeSessionId: session.claudeSessionId,
+    initialPrompt: session.initialPrompt,
+    systemPrompt: session.systemPrompt,
+    forkedFrom: session.forkedFrom,
+    forkKind: session.forkKind,
+  };
+}
+
+export function savePositions(positions: Record<string, NodePlacement>) {
   ensureDirs();
   const state = loadState();
 
@@ -80,7 +87,8 @@ export function savePositions(positions: Record<string, { x: number; y: number }
   for (const [nodeId, pos] of Object.entries(positions)) {
     const node = state.nodes.find(n => n.nodeId === nodeId);
     if (node) {
-      node.position = pos;
+      node.position = { x: pos.x, y: pos.y };
+      node.parentId = pos.parentId || undefined;
       updated++;
     } else {
       debug(`\x1b[38;5;245m[persistence]\x1b[0m Node ${nodeId} not found in state`);
@@ -135,6 +143,15 @@ export function removePromptFile(sessionId: string) {
     if (existsSync(promptFile)) unlinkSync(promptFile);
   } catch (e) {
     console.error("Failed to remove prompt file:", e);
+  }
+}
+
+export function writeState(state: PersistedState) {
+  ensureDirs();
+  try {
+    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  } catch (e) {
+    console.error("Failed to save state:", e);
   }
 }
 

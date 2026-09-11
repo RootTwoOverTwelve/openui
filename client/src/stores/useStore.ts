@@ -55,6 +55,11 @@ export interface AgentSession {
   claudeSessionId?: string;
   // First message sent when the session was spawned
   initialPrompt?: string;
+  // Standing context appended to the system prompt on every launch
+  systemPrompt?: string;
+  // Fork lineage
+  forkedFrom?: { sessionId: string; claudeSessionId?: string; name?: string; at: string };
+  forkKind?: "consult" | "develop";
 }
 
 interface AppState {
@@ -88,6 +93,12 @@ interface AppState {
   setSidebarWidth: (width: number | ((w: number) => number)) => void;
   sidebarResizing: boolean;
   setSidebarResizing: (resizing: boolean) => void;
+  archivedCount: number;
+  refreshArchivedCount: () => Promise<void>;
+  archiveModalOpen: boolean;
+  setArchiveModalOpen: (open: boolean) => void;
+  forkForNodeId: string | null;
+  setForkForNodeId: (id: string | null) => void;
   addAgentModalOpen: boolean;
   setAddAgentModalOpen: (open: boolean) => void;
   newSessionModalOpen: boolean;
@@ -156,6 +167,17 @@ export const useStore = create<AppState>((set) => ({
     })),
   sidebarResizing: false,
   setSidebarResizing: (resizing) => set({ sidebarResizing: resizing }),
+  archivedCount: 0,
+  refreshArchivedCount: async () => {
+    try {
+      const res = await fetch("/api/sessions/archived");
+      if (res.ok) set({ archivedCount: (await res.json()).length });
+    } catch {}
+  },
+  archiveModalOpen: false,
+  setArchiveModalOpen: (open) => set({ archiveModalOpen: open }),
+  forkForNodeId: null,
+  setForkForNodeId: (id) => set({ forkForNodeId: id }),
   addAgentModalOpen: false,
   setAddAgentModalOpen: (open) => set({ addAgentModalOpen: open }),
   newSessionModalOpen: false,

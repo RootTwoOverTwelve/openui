@@ -71,7 +71,22 @@ export function CategoryNode({ id, data, selected }: NodeProps) {
 
   const handleDelete = async () => {
     await fetch(`/api/categories/${id}`, { method: "DELETE" });
-    removeNode(id);
+    // Release agents inside, keeping where they are on the canvas
+    const { nodes, setNodes } = useStore.getState();
+    const me = nodes.find((n) => n.id === id);
+    if (me) {
+      setNodes(
+        nodes
+          .filter((n) => n.id !== id)
+          .map((n) => {
+            if (n.parentId !== id) return n;
+            const { parentId: _drop, ...rest } = n;
+            return { ...rest, position: { x: me.position.x + n.position.x, y: me.position.y + n.position.y } };
+          })
+      );
+    } else {
+      removeNode(id);
+    }
   };
 
   return (

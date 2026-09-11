@@ -10,7 +10,7 @@ export function useAgentNodeState(
   nodeData: AgentNodeData,
   session: AgentSession | undefined
 ) {
-  const { removeNode, removeSession, setSelectedNodeId, setSidebarOpen } =
+  const { removeNode, removeSession, setSelectedNodeId, setSidebarOpen, refreshArchivedCount, setForkForNodeId } =
     useStore();
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -49,6 +49,28 @@ export function useAgentNodeState(
     setSidebarOpen(false);
   };
 
+  const canFork = session?.agentId === "claude" && !!session?.claudeSessionId;
+  const forkDisabledReason = session?.agentId !== "claude"
+    ? "Only Claude Code sessions can be forked"
+    : "Waiting for the Claude session ID — send the agent a message first";
+
+  const handleFork = () => {
+    setForkForNodeId(id);
+  };
+
+  const handleArchive = async () => {
+    const sessionId = session?.sessionId || nodeData.sessionId;
+    if (sessionId) {
+      const res = await fetch(`/api/sessions/${sessionId}/archive`, { method: "POST" });
+      if (!res.ok) return;
+    }
+    removeSession(id);
+    removeNode(id);
+    setSelectedNodeId(null);
+    setSidebarOpen(false);
+    refreshArchivedCount();
+  };
+
   const closeContextMenu = () => {
     setContextMenu(null);
   };
@@ -56,6 +78,10 @@ export function useAgentNodeState(
   return {
     contextMenu,
     handleContextMenu,
+    canFork,
+    forkDisabledReason,
+    handleFork,
+    handleArchive,
     handleDelete,
     closeContextMenu,
   };

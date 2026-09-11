@@ -3,7 +3,7 @@ import { spawn as spawnPty } from "bun-pty";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "fs";
 import { join, basename } from "path";
 import { homedir } from "os";
-import type { Session } from "../types";
+import type { Session, PersistedNode, ForkOrigin, ForkKind } from "../types";
 import { loadBuffer, writePromptFile, removePromptFile } from "./persistence";
 import { debug } from "./log";
 
@@ -85,6 +85,13 @@ export function buildLaunch(params: {
 }): { command: string; typedPrompt?: string } {
   const { sessionId, agentId, command, initialPrompt } = params;
   const base = injectPluginDir(command, agentId);
+
+  // Standing context (session.systemPrompt, e.g. "you are a fork") is not
+  // passed here: --append-system-prompt is ignored in interactive mode.
+  // The plugin's SessionStart hook fetches it from /api/sessions/:id/context
+  // and prints it, which Claude Code adds to the model's context on every
+  // start, resume and compaction.
+
   const prompt = initialPrompt?.trim();
   if (!prompt) return { command: base };
 
@@ -93,6 +100,23 @@ export function buildLaunch(params: {
     return { command: `${base} "$(cat ${shellQuote(promptFile)})"` };
   }
   return { command: base, typedPrompt: prompt };
+}
+
+// Type a message into an agent's terminal and submit it. Enter goes in a
+// separate write after a pause: Claude Code treats a burst of input as a
+// paste, and an Enter inside the burst becomes a newline in the text box
+// instead of a submit.
+export function typeAndSubmit(pty: { write: (data: string) => void }, text: string, delayMs = 400) {
+  pty.write(text);
+  setTimeout(() => pty.write("\r"), delayMs);
+}
+
+// Flags that attach a launch to an existing Claude conversation
+export function resumeFlags(session: Pick<Session, "claudeSessionId" | "forkedFrom">): string {
+  if (session.claudeSessionId) return ` --resume ${session.claudeSessionId}`;
+  // A fork that never booted has no ID of its own yet: fork the parent again
+  if (session.forkedFrom?.claudeSessionId) return ` --resume ${session.forkedFrom.claudeSessionId} --fork-session`;
+  return "";
 }
 
 // Inject --plugin-dir flag for Claude commands if plugin is available
@@ -284,8 +308,12 @@ export function createSession(params: {
   createWorktreeFlag?: boolean;
   ticketPromptTemplate?: string;
   initialPrompt?: string;
+  systemPrompt?: string;
   // Attach to an existing Claude Code session instead of starting a new one
   resumeClaudeSessionId?: string;
+  // Or branch off one: same context, new Claude session ID
+  forkedFrom?: ForkOrigin;
+  forkKind?: ForkKind;
 }): { session: Session; cwd: string; gitBranch?: string } {
   const {
     sessionId,
@@ -304,7 +332,10 @@ export function createSession(params: {
     createWorktreeFlag,
     ticketPromptTemplate,
     initialPrompt,
+    systemPrompt,
     resumeClaudeSessionId,
+    forkedFrom,
+    forkKind,
   } = params;
 
   let workingDir = originalCwd;
@@ -383,7 +414,10 @@ export function createSession(params: {
     ticketTitle,
     ticketUrl,
     initialPrompt: initialPrompt?.trim() || undefined,
+    systemPrompt: systemPrompt?.trim() || undefined,
     claudeSessionId: resumeClaudeSessionId || undefined,
+    forkedFrom,
+    forkKind,
   };
 
   sessions.set(sessionId, session);
@@ -416,9 +450,7 @@ export function createSession(params: {
   });
 
   // Run the command (inject plugin-dir for Claude if available)
-  const launchCommand = resumeClaudeSessionId && agentId === "claude"
-    ? `${command} --resume ${resumeClaudeSessionId}`
-    : command;
+  const launchCommand = agentId === "claude" ? `${command}${resumeFlags(session)}` : command;
   const launch = buildLaunch({ sessionId, agentId, command: launchCommand, initialPrompt: session.initialPrompt });
   const finalCommand = launch.command;
   debug(`\x1b[38;5;82m[pty-write]\x1b[0m Writing command: ${finalCommand}`);
@@ -427,8 +459,9 @@ export function createSession(params: {
 
     // Non-Claude agents: type the initial prompt once the agent is up
     if (launch.typedPrompt) {
+      const typed = launch.typedPrompt;
       setTimeout(() => {
-        ptyProcess.write(launch.typedPrompt + "\r");
+        typeAndSubmit(ptyProcess, typed);
       }, 2000);
     }
 
@@ -442,7 +475,7 @@ export function createSession(params: {
           .replace(/\{\{url\}\}/g, ticketUrl)
           .replace(/\{\{id\}\}/g, ticketId || "")
           .replace(/\{\{title\}\}/g, ticketTitle || "");
-        ptyProcess.write(ticketPrompt + "\r");
+        typeAndSubmit(ptyProcess, ticketPrompt);
       }, 2000);
     }
   }, 300);
@@ -463,13 +496,48 @@ export function deleteSession(sessionId: string) {
   return true;
 }
 
+// Put a persisted node back into the live map as a detached session
+export function reviveSession(node: PersistedNode): Session {
+  const session: Session = {
+    pty: null,
+    agentId: node.agentId,
+    agentName: node.agentName,
+    command: node.command,
+    cwd: node.cwd,
+    gitBranch: getGitBranch(node.cwd) || undefined,
+    createdAt: node.createdAt,
+    clients: new Set(),
+    outputBuffer: loadBuffer(node.sessionId),
+    status: "disconnected",
+    lastOutputTime: 0,
+    lastInputTime: 0,
+    recentOutputSize: 0,
+    customName: node.customName,
+    customColor: node.customColor,
+    notes: node.notes,
+    nodeId: node.nodeId,
+    isRestored: true,
+    position: node.position,
+    parentId: node.parentId,
+    claudeSessionId: node.claudeSessionId,
+    initialPrompt: node.initialPrompt,
+    systemPrompt: node.systemPrompt,
+    forkedFrom: node.forkedFrom,
+    forkKind: node.forkKind,
+  };
+  sessions.set(node.sessionId, session);
+  return session;
+}
+
 export function restoreSessions() {
   const { loadState } = require("./persistence");
   const state = loadState();
 
-  log(`\x1b[38;5;245m[restore]\x1b[0m Found ${state.nodes.length} saved sessions`);
+  const archived = state.nodes.filter((n: PersistedNode) => n.archivedAt).length;
+  log(`\x1b[38;5;245m[restore]\x1b[0m Found ${state.nodes.length - archived} saved sessions${archived ? ` (+${archived} archived)` : ""}`);
 
   for (const node of state.nodes) {
+    if (node.archivedAt) continue;
     const buffer = loadBuffer(node.sessionId);
     const gitBranch = getGitBranch(node.cwd);
 
@@ -492,8 +560,13 @@ export function restoreSessions() {
       notes: node.notes,
       nodeId: node.nodeId,
       isRestored: true,
+      position: node.position,
+      parentId: node.parentId,
       claudeSessionId: node.claudeSessionId,
       initialPrompt: node.initialPrompt,
+      systemPrompt: node.systemPrompt,
+      forkedFrom: node.forkedFrom,
+      forkKind: node.forkKind,
     };
 
     sessions.set(node.sessionId, session);

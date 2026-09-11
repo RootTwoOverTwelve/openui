@@ -27,8 +27,8 @@ export function CanvasControls() {
       label: "New Category",
       color,
       position,
-      width: 250,
-      height: 200,
+      width: 456,
+      height: 312,
     };
 
     // Save to server
@@ -43,7 +43,7 @@ export function CanvasControls() {
       id,
       type: "category",
       position,
-      style: { width: 250, height: 200 },
+      style: { width: 456, height: 312 },
       data: {
         label: "New Category",
         color,

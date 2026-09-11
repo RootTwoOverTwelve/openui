@@ -11,6 +11,7 @@ import {
   Copy,
   Check,
   LogOut,
+  GitFork,
   Sparkles,
   Code,
   Cpu,
@@ -499,6 +500,18 @@ export function Sidebar() {
                 <p className="text-xs text-zinc-400 italic mb-3 pb-3 border-b border-border">
                   {session.notes}
                 </p>
+              )}
+              {session.forkedFrom && (
+                <div className="flex items-center gap-2 text-xs mb-3 pb-3 border-b border-border">
+                  <GitFork className="w-3 h-3 text-zinc-600 flex-shrink-0" />
+                  <span className="text-zinc-500">
+                    {session.forkKind === "develop" ? "Dev fork" : session.forkKind === "consult" ? "Consult fork" : "Fork"} of
+                  </span>
+                  <span className="text-zinc-300 truncate">{session.forkedFrom.name || "a session"}</span>
+                  <span className="text-zinc-600 ml-auto whitespace-nowrap" title={session.forkedFrom.at}>
+                    {new Date(session.forkedFrom.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                  </span>
+                </div>
               )}
               {session.initialPrompt && (
                 <p

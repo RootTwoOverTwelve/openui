@@ -16,6 +16,65 @@ import { useStore } from "./stores/useStore";
 import { AgentNode } from "./components/AgentNode/index";
 import { CategoryNode } from "./components/CategoryNode";
 import { Sidebar } from "./components/Sidebar";
+import { ForkModal } from "./components/ForkModal";
+
+const GRID_SIZE = 24;
+const snap = (v: number) => Math.round(v / GRID_SIZE) * GRID_SIZE;
+
+function nodeSize(node: any, fallbackW: number, fallbackH: number) {
+  const width = node.measured?.width || node.width || (typeof node.style?.width === "number" ? node.style.width : parseInt(node.style?.width) || fallbackW);
+  const height = node.measured?.height || node.height || (typeof node.style?.height === "number" ? node.style.height : parseInt(node.style?.height) || fallbackH);
+  return { width, height };
+}
+
+// Agents are parented to the category their centre lands in. On the canvas
+// React Flow keeps a child's position relative to its parent, so moving a
+// category carries its agents along; on disk positions are always absolute
+// and parentId is just an annotation, so losing it can never displace a
+// card. Dropping on empty canvas releases the agent. Returns a new node
+// array only if something changed.
+function assignParents(nodes: any[], movedIds: Set<string>): any[] | null {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const categories = nodes.filter((n) => n.type === "category");
+  let changed = false;
+
+  const next = nodes.map((node) => {
+    if (node.type !== "agent" || !movedIds.has(node.id)) return node;
+
+    const parent = node.parentId ? byId.get(node.parentId) : undefined;
+    const abs = parent
+      ? { x: parent.position.x + node.position.x, y: parent.position.y + node.position.y }
+      : node.position;
+    const { width, height } = nodeSize(node, 380, 240);
+    const cx = abs.x + width / 2;
+    const cy = abs.y + height / 2;
+
+    const target = categories.find((cat) => {
+      const size = nodeSize(cat, 250, 200);
+      return cx >= cat.position.x && cx <= cat.position.x + size.width &&
+             cy >= cat.position.y && cy <= cat.position.y + size.height;
+    });
+
+    if (target && target.id !== node.parentId) {
+      changed = true;
+      return {
+        ...node,
+        parentId: target.id,
+        position: { x: snap(abs.x - target.position.x), y: snap(abs.y - target.position.y) },
+      };
+    }
+    if (!target && node.parentId) {
+      changed = true;
+      const { parentId: _drop, ...rest } = node;
+      return { ...rest, position: { x: snap(abs.x), y: snap(abs.y) } };
+    }
+    return node;
+  });
+
+  if (!changed) return null;
+  // React Flow wants parents ahead of their children
+  return [...next.filter((n) => n.type === "category"), ...next.filter((n) => n.type !== "category")];
+}
 
 function readSessionFromHash(): string | null {
   const m = window.location.hash.match(/^#\/session\/([^/?]+)/);
@@ -140,15 +199,22 @@ function AppContent() {
         });
 
         // Restore agent sessions
+        const categoryIds = new Set(categories.map((cat: any) => cat.id));
         sessions.forEach((session: any, index: number) => {
           const saved = savedNodes?.find((n: any) => n.sessionId === session.sessionId);
           const agent = agents.find((a) => a.id === session.agentId);
-          const position = saved?.position?.x
+          const parentId = saved?.parentId && categoryIds.has(saved.parentId) ? saved.parentId : undefined;
+          const hasPosition = saved?.position && (saved.position.x || saved.position.y);
+          const absolute = hasPosition
             ? saved.position
             : {
                 x: 100 + (index % 5) * 220,
                 y: 100 + Math.floor(index / 5) * 150,
               };
+          const parentCat = parentId ? categories.find((cat: any) => cat.id === parentId) : undefined;
+          const position = parentCat
+            ? { x: absolute.x - parentCat.position.x, y: absolute.y - parentCat.position.y }
+            : absolute;
 
           addSession(session.nodeId, {
             id: session.nodeId,
@@ -170,12 +236,16 @@ function AppContent() {
             ticketTitle: session.ticketTitle,
             claudeSessionId: session.claudeSessionId,
             initialPrompt: session.initialPrompt,
+            systemPrompt: session.systemPrompt,
+            forkedFrom: session.forkedFrom,
+            forkKind: session.forkKind,
           });
 
           restoredNodes.push({
             id: session.nodeId,
             type: "agent",
             position,
+            ...(parentId && { parentId }),
             data: {
               label: session.customName || session.agentName,
               agentId: session.agentId,
@@ -232,14 +302,17 @@ function AppContent() {
     const currentNodes = nodesToSave || useStore.getState().nodes;
     if (currentNodes.length === 0) return;
 
-    const positions: Record<string, { x: number; y: number }> = {};
-    const GRID_SIZE = 24;
+    const positions: Record<string, { x: number; y: number; parentId: string | null }> = {};
+    const byId = new Map(currentNodes.map((n) => [n.id, n]));
     currentNodes.forEach((node) => {
-      // Only save agent positions to state/positions
+      // Only save agent positions to state/positions, always as absolute
+      // canvas coordinates
       if (node.type === "agent") {
+        const parent = node.parentId ? byId.get(node.parentId) : undefined;
         positions[node.id] = {
-          x: Math.round(node.position.x / GRID_SIZE) * GRID_SIZE,
-          y: Math.round(node.position.y / GRID_SIZE) * GRID_SIZE,
+          x: snap(node.position.x + (parent?.position.x || 0)),
+          y: snap(node.position.y + (parent?.position.y || 0)),
+          parentId: node.parentId || null,
         };
       }
       // Save category positions/sizes separately
@@ -252,10 +325,7 @@ function AppContent() {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            position: {
-              x: Math.round(node.position.x / GRID_SIZE) * GRID_SIZE,
-              y: Math.round(node.position.y / GRID_SIZE) * GRID_SIZE,
-            },
+            position: { x: snap(node.position.x), y: snap(node.position.y) },
             width,
             height,
           }),
@@ -297,12 +367,21 @@ function AppContent() {
         clearTimeout(positionUpdateTimeout.current);
       }
       // Compute updated nodes immediately to avoid sync delay issues
-      const updatedNodes = applyNodeChanges(changes, nodes);
+      let updatedNodes = applyNodeChanges(changes, nodes);
+
+      // Agents dropped onto / off a category change parent
+      const movedIds = new Set(positionChanges.map((c) => (c as { id: string }).id));
+      const reparented = movedIds.size > 0 ? assignParents(updatedNodes, movedIds) : null;
+      if (reparented) {
+        updatedNodes = reparented;
+        setNodes(reparented);
+      }
+
       positionUpdateTimeout.current = setTimeout(() => {
         saveAllPositions(updatedNodes);
       }, 300);
     }
-  }, [onNodesChange, saveAllPositions, nodes]);
+  }, [onNodesChange, saveAllPositions, nodes, setNodes]);
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: any) => {
@@ -379,6 +458,8 @@ function AppContent() {
 
         <Sidebar />
       </div>
+
+      <ForkModal />
 
       <NewSessionModal
         open={addAgentModalOpen || newSessionModalOpen}

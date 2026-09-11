@@ -1,12 +1,17 @@
-import { useState } from "react";
-import { Plus, Folder, Settings } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Plus, Folder, Settings, Archive } from "lucide-react";
 import { motion } from "framer-motion";
 import { useStore } from "../stores/useStore";
 import { SettingsModal } from "./SettingsModal";
+import { ArchiveModal } from "./ArchiveModal";
 
 export function Header() {
-  const { setAddAgentModalOpen, sessions, launchCwd } = useStore();
+  const { setAddAgentModalOpen, sessions, launchCwd, archivedCount, refreshArchivedCount, archiveModalOpen, setArchiveModalOpen } = useStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  useEffect(() => {
+    refreshArchivedCount();
+  }, [refreshArchivedCount]);
 
   return (
     <header className="h-14 px-4 flex items-center justify-between border-b border-border bg-canvas-dark">
@@ -38,6 +43,18 @@ export function Header() {
       {/* Right side buttons */}
       <div className="flex items-center gap-2">
         <button
+          onClick={() => setArchiveModalOpen(true)}
+          className="relative p-2 rounded-md text-zinc-400 hover:text-white hover:bg-surface-active transition-colors"
+          title="Archived sessions"
+        >
+          <Archive className="w-4 h-4" />
+          {archivedCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-zinc-600 text-[10px] leading-4 text-white text-center">
+              {archivedCount}
+            </span>
+          )}
+        </button>
+        <button
           onClick={() => setSettingsOpen(true)}
           className="p-2 rounded-md text-zinc-400 hover:text-white hover:bg-surface-active transition-colors"
           title="Settings"
@@ -56,6 +73,7 @@ export function Header() {
       </div>
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <ArchiveModal open={archiveModalOpen} onClose={() => setArchiveModalOpen(false)} />
     </header>
   );
 }

@@ -143,5 +143,16 @@ if [ -n "$STATUS" ]; then
     --max-time 2 2>&1) || true
 fi
 
+# On SessionStart, hand OpenUI's standing context for this session to Claude:
+# whatever a SessionStart hook prints is added to the model's context. Fires
+# on startup, resume and after compaction, so briefings (e.g. "you are a
+# consult fork") always come back.
+if [ "$HOOK_EVENT" = "SessionStart" ] && [ -n "$OPENUI_SID" ]; then
+  CONTEXT=$(curl -s --max-time 2 "http://${OPENUI_HOST}:${OPENUI_PORT}/api/sessions/${OPENUI_SID}/context" 2>/dev/null) || true
+  if [ -n "$CONTEXT" ]; then
+    printf '%s\n' "$CONTEXT"
+  fi
+fi
+
 # Always exit successfully so we don't block Claude
 exit 0

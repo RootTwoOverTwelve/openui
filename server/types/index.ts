@@ -25,6 +25,8 @@ export interface Session {
   nodeId: string;
   isRestored?: boolean;
   position?: { x: number; y: number };
+  // Category this node sits in; position is then relative to it
+  parentId?: string;
   // Linear ticket info
   ticketId?: string;
   ticketTitle?: string;
@@ -36,6 +38,13 @@ export interface Session {
   claudeSessionId?: string;
   // Optional first message, sent once when the session is first spawned
   initialPrompt?: string;
+  // Standing context appended to the system prompt on every launch
+  systemPrompt?: string;
+  // Fork lineage
+  forkedFrom?: ForkOrigin;
+  forkKind?: ForkKind;
+  // Heads-up for the parent, held until this fork has booted (in-memory only)
+  pendingParentNotice?: { parentSessionId: string; text: string; expiry: ReturnType<typeof setTimeout> };
   // Current tool being used (from plugin)
   currentTool?: string;
   // Last hook event received
@@ -43,6 +52,15 @@ export interface Session {
   // Permission detection
   preToolTime?: number;
   permissionTimeout?: ReturnType<typeof setTimeout>;
+}
+
+export type ForkKind = "consult" | "develop";
+
+export interface ForkOrigin {
+  sessionId: string;
+  claudeSessionId?: string;
+  name?: string;
+  at: string;
 }
 
 export interface LinearTicket {
@@ -76,9 +94,16 @@ export interface PersistedNode {
   customColor?: string;
   notes?: string;
   position: { x: number; y: number };
+  parentId?: string;
   // Claude Code's internal session ID, used for `claude --resume`
   claudeSessionId?: string;
   initialPrompt?: string;
+  systemPrompt?: string;
+  forkedFrom?: ForkOrigin;
+  forkKind?: ForkKind;
+  // Archived: off the canvas and out of the live session map, but kept
+  // so it can be restored without re-entering the Claude session ID
+  archivedAt?: string;
 }
 
 export interface PersistedCategory {

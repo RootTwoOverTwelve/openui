@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, buildLaunch, getUserShell, findClaudeSession } from "../services/sessionManager";
-import { loadState, saveState, savePositions, getDataDir } from "../services/persistence";
+import { sessions, createSession, deleteSession, buildLaunch, resumeFlags, getUserShell, findClaudeSession, reviveSession, typeAndSubmit } from "../services/sessionManager";
+import { loadState, saveState, savePositions, writeState, sessionToNode, getDataDir, type NodePlacement } from "../services/persistence";
 import { debug } from "../services/log";
 import {
   loadConfig,
@@ -127,6 +127,9 @@ apiRoutes.get("/sessions", (c) => {
       ticketTitle: session.ticketTitle,
       claudeSessionId: session.claudeSessionId,
       initialPrompt: session.initialPrompt,
+      systemPrompt: session.systemPrompt,
+      forkedFrom: session.forkedFrom,
+      forkKind: session.forkKind,
     };
   });
   return c.json(sessionList);
@@ -142,7 +145,7 @@ apiRoutes.get("/sessions/:sessionId/status", (c) => {
 
 apiRoutes.get("/state", (c) => {
   const state = loadState();
-  const nodes = state.nodes.map(node => {
+  const nodes = state.nodes.filter(node => !node.archivedAt).map(node => {
     const session = sessions.get(node.sessionId);
     return {
       ...node,
@@ -155,13 +158,14 @@ apiRoutes.get("/state", (c) => {
 });
 
 apiRoutes.post("/state/positions", async (c) => {
-  const { positions } = await c.req.json();
+  const { positions } = await c.req.json() as { positions: Record<string, NodePlacement> };
 
   // Also update session positions in memory
   for (const [nodeId, pos] of Object.entries(positions)) {
     for (const [, session] of sessions) {
       if (session.nodeId === nodeId) {
-        session.position = pos as { x: number; y: number };
+        session.position = { x: pos.x, y: pos.y };
+        session.parentId = pos.parentId || undefined;
         break;
       }
     }
@@ -190,8 +194,29 @@ apiRoutes.post("/sessions", async (c) => {
     baseBranch,
     createWorktree: createWorktreeFlag,
     initialPrompt,
+    systemPrompt,
     resumeClaudeSessionId,
+    forkFromSessionId,
+    forkKind,
+    notifyParent,
   } = body;
+
+  // Forks branch off a live or restored node's Claude session under a new
+  // ID, so the parent keeps running untouched
+  let forkedFrom;
+  let parent;
+  if (forkFromSessionId) {
+    parent = sessions.get(forkFromSessionId);
+    if (!parent) return c.json({ error: "Parent session not found" }, 404);
+    if (parent.agentId !== "claude") return c.json({ error: "Only Claude Code sessions can be forked" }, 400);
+    if (!parent.claudeSessionId) return c.json({ error: "Parent has no Claude session ID yet (send it a message first)" }, 400);
+    forkedFrom = {
+      sessionId: forkFromSessionId,
+      claudeSessionId: parent.claudeSessionId,
+      name: parent.customName || parent.agentName,
+      at: new Date().toISOString(),
+    };
+  }
 
   // One live process per Claude session: if it's already attached to a
   // node here, point the client at that node instead of spawning another.
@@ -227,8 +252,32 @@ apiRoutes.post("/sessions", async (c) => {
     createWorktreeFlag,
     ticketPromptTemplate,
     initialPrompt,
+    systemPrompt,
     resumeClaudeSessionId,
+    forkedFrom,
+    forkKind,
   });
+
+  // Queue a heads-up for the parent. It must NOT go out yet: the fork
+  // snapshots the parent's transcript when it boots (~2s), and anything
+  // submitted to the parent before then is inherited by the fork. The
+  // fork's own SessionStart hook is the signal that the snapshot is taken;
+  // /status-update sends the notice then. If that never arrives, drop it —
+  // a missing notice beats a misdelivered one.
+  if (parent?.pty && notifyParent) {
+    const forkName = customName || agentName;
+    const text = (forkKind === "develop"
+      ? `[OpenUI] A development fork of this session, "${forkName}", was just created and may be editing this same directory in parallel. Watch for concurrent changes, avoid destructive git operations, and re-read files before editing.`
+      : `[OpenUI] A consult fork of this session, "${forkName}", was created to answer questions using your context. It should not modify files.`
+    ).replace(/\s+/g, " ");
+    const expiry = setTimeout(() => {
+      if (result.session.pendingParentNotice) {
+        result.session.pendingParentNotice = undefined;
+        log(`\x1b[38;5;141m[session]\x1b[0m Fork ${sessionId} never reported SessionStart; parent notice dropped`);
+      }
+    }, 30000);
+    result.session.pendingParentNotice = { parentSessionId: forkFromSessionId, text, expiry };
+  }
 
   saveState(sessions);
   return c.json({
@@ -245,17 +294,22 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
   if (!session) return c.json({ error: "Session not found" }, 404);
   if (session.pty) return c.json({ error: "Session already running" }, 400);
 
-  // Resume the previous Claude conversation if we know its ID and the
-  // original command doesn't already pin one.
-  const canResume =
-    session.agentId === "claude" &&
-    !!session.claudeSessionId &&
-    !/--resume\b|--continue\b|(^|\s)-[cr]\b/.test(session.command);
+  // Resume the previous Claude conversation if we know its ID (or re-fork
+  // the parent for a fork that never booted), unless the original command
+  // already pins one.
+  const flags = session.agentId === "claude" && !/--resume\b|--continue\b|(^|\s)-[cr]\b/.test(session.command)
+    ? resumeFlags(session)
+    : "";
+  const canResume = flags !== "";
+
   // On resume the conversation already has the initial prompt, so it is only
   // re-sent when we're starting the agent over from scratch.
-  const launch = canResume
-    ? { command: buildLaunch({ sessionId, agentId: session.agentId, command: `${session.command} --resume ${session.claudeSessionId}` }).command }
-    : buildLaunch({ sessionId, agentId: session.agentId, command: session.command, initialPrompt: session.initialPrompt });
+  const launch = buildLaunch({
+    sessionId,
+    agentId: session.agentId,
+    command: `${session.command}${flags}`,
+    initialPrompt: canResume ? undefined : session.initialPrompt,
+  });
 
   const { spawn } = await import("bun-pty");
   const shell = getUserShell();
@@ -308,8 +362,9 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
   setTimeout(() => {
     ptyProcess.write(`${launch.command}\r`);
     if (launch.typedPrompt) {
+      const typed = launch.typedPrompt;
       setTimeout(() => {
-        ptyProcess.write(launch.typedPrompt + "\r");
+        typeAndSubmit(ptyProcess, typed);
       }, 2000);
     }
   }, 300);
@@ -317,6 +372,100 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
   saveState(sessions);
   log(`\x1b[38;5;141m[session]\x1b[0m ${canResume ? "Resumed" : "Restarted"} ${sessionId}${canResume ? ` (claude: ${session.claudeSessionId})` : ""}`);
   return c.json({ success: true, resumed: canResume });
+});
+
+// Standing context for a session, fetched by the plugin's SessionStart hook
+// and echoed so Claude Code adds it to the model's context. Plain text;
+// 204 when there is none so the hook prints nothing.
+apiRoutes.get("/sessions/:sessionId/context", (c) => {
+  const session = sessions.get(c.req.param("sessionId"));
+  if (!session) return c.body(null, 404);
+  const text = session.systemPrompt?.trim();
+  if (!text) return c.body(null, 204);
+  return c.text(text);
+});
+
+// ============ Archive ============
+
+apiRoutes.get("/sessions/archived", (c) => {
+  const state = loadState();
+  const archived = state.nodes
+    .filter(n => n.archivedAt)
+    .sort((a, b) => (b.archivedAt || "").localeCompare(a.archivedAt || ""));
+  return c.json(archived);
+});
+
+// Detach, drop from the canvas, keep the record
+apiRoutes.post("/sessions/:sessionId/archive", (c) => {
+  const sessionId = c.req.param("sessionId");
+  const session = sessions.get(sessionId);
+  if (!session) return c.json({ error: "Session not found" }, 404);
+
+  if (session.pty) session.pty.kill();
+  sessions.delete(sessionId);
+  saveState(sessions); // writes live nodes; the archived one is added below
+
+  const state = loadState();
+  state.nodes.push({ ...sessionToNode(sessionId, session), archivedAt: new Date().toISOString() });
+  writeState(state);
+
+  log(`\x1b[38;5;141m[session]\x1b[0m Archived ${sessionId}`);
+  return c.json({ success: true });
+});
+
+// Back onto the canvas as a detached, resumable node
+apiRoutes.post("/sessions/archived/:sessionId/restore", async (c) => {
+  const sessionId = c.req.param("sessionId");
+  const { position } = await c.req.json().catch(() => ({} as { position?: { x: number; y: number } }));
+  const state = loadState();
+  const node = state.nodes.find(n => n.sessionId === sessionId && n.archivedAt);
+  if (!node) return c.json({ error: "Archived session not found" }, 404);
+
+  const categoryExists = !!node.parentId && !!state.categories?.some(cat => cat.id === node.parentId);
+  const revived = reviveSession({
+    ...node,
+    archivedAt: undefined,
+    position: position || node.position,
+    parentId: position ? undefined : (categoryExists ? node.parentId : undefined),
+  });
+  // Drop the archived record, then let saveState write it back as a live node
+  state.nodes = state.nodes.filter(n => !(n.sessionId === sessionId && n.archivedAt));
+  writeState(state);
+  saveState(sessions);
+
+  log(`\x1b[38;5;141m[session]\x1b[0m Restored ${sessionId} from archive`);
+  return c.json({
+    sessionId,
+    nodeId: revived.nodeId,
+    agentId: revived.agentId,
+    agentName: revived.agentName,
+    command: revived.command,
+    createdAt: revived.createdAt,
+    cwd: revived.cwd,
+    gitBranch: revived.gitBranch,
+    status: revived.status,
+    customName: revived.customName,
+    customColor: revived.customColor,
+    notes: revived.notes,
+    isRestored: true,
+    claudeSessionId: revived.claudeSessionId,
+    initialPrompt: revived.initialPrompt,
+    systemPrompt: revived.systemPrompt,
+    forkedFrom: revived.forkedFrom,
+    forkKind: revived.forkKind,
+    position: revived.position,
+    parentId: revived.parentId,
+  });
+});
+
+apiRoutes.delete("/sessions/archived/:sessionId", (c) => {
+  const sessionId = c.req.param("sessionId");
+  const state = loadState();
+  const index = state.nodes.findIndex(n => n.sessionId === sessionId && n.archivedAt);
+  if (index === -1) return c.json({ error: "Archived session not found" }, 404);
+  state.nodes.splice(index, 1);
+  writeState(state);
+  return c.json({ success: true });
 });
 
 // Stop the PTY but keep the node, so the Claude session can be resumed
@@ -404,6 +553,19 @@ apiRoutes.post("/status-update", async (c) => {
     if (claudeSessionId && session.claudeSessionId !== claudeSessionId) {
       session.claudeSessionId = claudeSessionId;
       saveState(sessions);
+    }
+
+    // The fork has booted and taken its snapshot of the parent: now the
+    // parent can be told without the fork inheriting the message
+    if (hookEvent === "SessionStart" && session.pendingParentNotice) {
+      const { parentSessionId, text, expiry } = session.pendingParentNotice;
+      clearTimeout(expiry);
+      session.pendingParentNotice = undefined;
+      const parent = sessions.get(parentSessionId);
+      if (parent?.pty) {
+        const parentPty = parent.pty;
+        setTimeout(() => typeAndSubmit(parentPty, text), 1000);
+      }
     }
 
     // No PTY means OpenUI isn't attached (detached, or restored after a
@@ -543,6 +705,15 @@ apiRoutes.delete("/categories/:categoryId", (c) => {
 
   const index = state.categories.findIndex(cat => cat.id === categoryId);
   if (index === -1) return c.json({ error: "Category not found" }, 404);
+
+  // Release any agents inside it (positions are stored absolute, so
+  // nothing moves)
+  for (const node of state.nodes) {
+    if (node.parentId !== categoryId) continue;
+    node.parentId = undefined;
+    const session = sessions.get(node.sessionId);
+    if (session) session.parentId = undefined;
+  }
 
   state.categories.splice(index, 1);
 
