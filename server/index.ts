@@ -74,7 +74,9 @@ Bun.serve<WebSocketData>({
 
       if (session.outputBuffer.length > 0 && !session.isRestored && session.pty) {
         const history = session.outputBuffer.join("");
-        ws.send(JSON.stringify({ type: "output", data: history }));
+        // Flagged so the client can swallow xterm's automatic replies
+        // (cursor-position reports etc.) instead of typing them into the PTY
+        ws.send(JSON.stringify({ type: "output", data: history, history: true }));
       } else if (session.isRestored || !session.pty) {
         ws.send(JSON.stringify({
           type: "output",
@@ -135,7 +137,7 @@ setInterval(() => {
 }, 30000);
 
 // Cleanup on exit
-process.on("SIGINT", () => {
+function shutdown() {
   log("\n\x1b[38;5;245m[server]\x1b[0m Saving state before exit...");
   saveState(sessions);
   for (const [, session] of sessions) {
@@ -143,4 +145,7 @@ process.on("SIGINT", () => {
     if (session.stateTrackerPty) session.stateTrackerPty.kill();
   }
   process.exit(0);
-});
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+process.on("SIGHUP", shutdown);

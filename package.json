@@ -32,7 +32,7 @@
     "README.md"
   ],
   "scripts": {
-    "start": "bun run server/index.ts",
+    "start": "PORT=${PORT:-6969} bun run server/index.ts",
     "dev": "concurrently \"bun run --watch server/index.ts\" \"bun run --cwd client dev\"",
     "build": "bun run --cwd client build",
     "prepublishOnly": "bun run build",

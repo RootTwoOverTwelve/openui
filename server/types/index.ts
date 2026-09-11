@@ -34,6 +34,8 @@ export interface Session {
   lastPluginStatusTime?: number;
   // Claude Code's internal session ID (different from our sessionId)
   claudeSessionId?: string;
+  // Optional first message, sent once when the session is first spawned
+  initialPrompt?: string;
   // Current tool being used (from plugin)
   currentTool?: string;
   // Last hook event received
@@ -74,6 +76,9 @@ export interface PersistedNode {
   customColor?: string;
   notes?: string;
   position: { x: number; y: number };
+  // Claude Code's internal session ID, used for `claude --resume`
+  claudeSessionId?: string;
+  initialPrompt?: string;
 }
 
 export interface PersistedCategory {

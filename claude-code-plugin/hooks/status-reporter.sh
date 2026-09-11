@@ -45,6 +45,9 @@ if command -v jq &> /dev/null; then
 
   # Subagent info (for SubagentStop)
   SUBAGENT_TYPE=$(echo "$INPUT" | jq -r '.subagent_type // empty' 2>/dev/null || echo "")
+
+  # SessionStart source (startup/resume/clear/compact)
+  SESSION_SOURCE=$(echo "$INPUT" | jq -r '.source // empty' 2>/dev/null || echo "")
 else
   # Fallback to grep/sed for systems without jq
   CLAUDE_SESSION_ID=$(echo "$INPUT" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*: *"//' | sed 's/"$//' || echo "")
@@ -60,6 +63,7 @@ else
   SUBAGENT_TYPE=""
   NOTIFICATION_MESSAGE=""
   STOP_RESULT=""
+  SESSION_SOURCE=""
 fi
 
 # Build the JSON payload with all available data
@@ -116,6 +120,11 @@ if [ -n "$STATUS" ]; then
   # Add subagent type if present
   if [ -n "$SUBAGENT_TYPE" ]; then
     PAYLOAD="${PAYLOAD},\"subagentType\":\"${SUBAGENT_TYPE}\""
+  fi
+
+  # Add session start source if present
+  if [ -n "$SESSION_SOURCE" ]; then
+    PAYLOAD="${PAYLOAD},\"sessionSource\":\"${SESSION_SOURCE}\""
   fi
 
   # Add truncated user prompt if present (useful for understanding what user asked)

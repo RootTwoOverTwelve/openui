@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -7,6 +7,7 @@ import {
   Folder,
   Edit3,
   RotateCcw,
+  Play,
   Sparkles,
   Code,
   Cpu,
@@ -28,6 +29,23 @@ const statusConfig: Record<AgentStatus, { label: string; color: string }> = {
   disconnected: { label: "Disconnected", color: "#EF4444" },
   error: { label: "Error", color: "#EF4444" },
 };
+
+const SIDEBAR_WIDTH_KEY = "openui-sidebar-width";
+const SIDEBAR_DEFAULT_WIDTH = 512;
+const SIDEBAR_MIN_WIDTH = 360;
+
+function loadSidebarWidth(): number {
+  try {
+    const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    if (saved >= SIDEBAR_MIN_WIDTH) return saved;
+  } catch {}
+  return SIDEBAR_DEFAULT_WIDTH;
+}
+
+function clampSidebarWidth(width: number): number {
+  const max = Math.max(SIDEBAR_MIN_WIDTH, Math.floor(window.innerWidth * 0.8));
+  return Math.min(max, Math.max(SIDEBAR_MIN_WIDTH, width));
+}
 
 const presetColors = [
   "#F97316", "#22C55E", "#3B82F6", "#8B5CF6", "#EC4899", "#EF4444", "#FBBF24", "#14B8A6"
@@ -67,6 +85,57 @@ export function Sidebar() {
   const [editColor, setEditColor] = useState("");
   const [editIcon, setEditIcon] = useState("");
   const [terminalKey, setTerminalKey] = useState(0);
+  const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
+  const [isResizing, setIsResizing] = useState(false);
+
+  // Drag the left edge to resize the panel
+  const handleResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    setIsResizing(true);
+
+    const onMove = (ev: PointerEvent) => {
+      setSidebarWidth(clampSidebarWidth(window.innerWidth - ev.clientX));
+    };
+    const onUp = () => {
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onUp);
+      setIsResizing(false);
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onUp);
+  }, []);
+
+  // Persist width once a drag finishes
+  useEffect(() => {
+    if (isResizing) return;
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+    } catch {}
+  }, [isResizing, sidebarWidth]);
+
+  // Keep the terminal from grabbing selection/cursor while dragging
+  useEffect(() => {
+    if (!isResizing) return;
+    const prevCursor = document.body.style.cursor;
+    const prevSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    return () => {
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevSelect;
+    };
+  }, [isResizing]);
+
+  // Re-clamp if the window shrinks below the saved width
+  useEffect(() => {
+    const onWindowResize = () => setSidebarWidth(w => clampSidebarWidth(w));
+    window.addEventListener("resize", onWindowResize);
+    return () => window.removeEventListener("resize", onWindowResize);
+  }, []);
 
   // Reset edit state when session changes (but NOT when nodes change)
   useEffect(() => {
@@ -96,9 +165,35 @@ export function Sidebar() {
     }
   };
 
+  const [isResuming, setIsResuming] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+
+  // Restart the PTY in place; the server resumes the Claude conversation
+  // when it knows the Claude session ID
+  const handleResume = async () => {
+    if (!selectedNodeId || !session || isResuming) return;
+    setIsResuming(true);
+    setResumeError(null);
+    try {
+      const res = await fetch(`/api/sessions/${session.sessionId}/restart`, { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      updateSession(selectedNodeId, { status: "running", isRestored: false });
+      // Reconnect the terminal so it replays scrollback and attaches to the new PTY
+      setTerminalKey(k => k + 1);
+    } catch (e) {
+      setResumeError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsResuming(false);
+    }
+  };
+
   const displayColor = editColor || session?.customColor || session?.color || "#888";
   const statusInfo = statusConfig[session?.status || "idle"];
   const isDisconnected = session?.status === "disconnected";
+  const canResume = session?.agentId === "claude" && !!session?.claudeSessionId;
 
   return (
     <AnimatePresence>
@@ -108,8 +203,19 @@ export function Sidebar() {
           animate={{ x: 0, opacity: 1 }}
           exit={{ x: "100%", opacity: 0 }}
           transition={{ type: "spring", stiffness: 400, damping: 40 }}
-          className="fixed right-0 top-14 bottom-0 w-full max-w-lg z-50 flex flex-col bg-canvas-dark border-l border-border"
+          style={{ width: sidebarWidth, maxWidth: "100vw" }}
+          className="fixed right-0 top-14 bottom-0 z-50 flex flex-col bg-canvas-dark border-l border-border"
         >
+          {/* Resize handle */}
+          <div
+            onPointerDown={handleResizeStart}
+            onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT_WIDTH)}
+            title="Drag to resize · double-click to reset"
+            className={`absolute top-0 bottom-0 -left-[3px] w-[6px] cursor-col-resize z-10 transition-colors ${
+              isResizing ? "bg-zinc-500" : "hover:bg-zinc-600"
+            }`}
+          />
+
           {/* Header */}
           <div className="flex-shrink-0 px-4 py-3 border-b border-border">
             <div className="flex items-center gap-3">
@@ -157,15 +263,33 @@ export function Sidebar() {
               <div className="space-y-3">
                 <div>
                   <p className="text-sm text-red-400 font-medium">Session Disconnected</p>
-                  <p className="text-xs text-red-400/70 mt-0.5">The agent was stopped. Start a new session.</p>
+                  <p className="text-xs text-red-400/70 mt-0.5">
+                    {canResume
+                      ? "The agent was stopped. Resume where it left off, or start fresh."
+                      : "The agent was stopped. Restart it, or start fresh."}
+                  </p>
                 </div>
-                <button
-                  onClick={handleNewSession}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-md bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  New Session
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleResume}
+                    disabled={isResuming}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md bg-red-500 text-white text-sm font-medium hover:bg-red-600 disabled:opacity-60 transition-colors"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    {isResuming ? "Starting…" : canResume ? "Resume" : "Restart"}
+                  </button>
+                  <button
+                    onClick={handleNewSession}
+                    disabled={isResuming}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md bg-surface-active text-zinc-300 text-sm font-medium hover:bg-zinc-700 disabled:opacity-60 transition-colors"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Spawn Fresh
+                  </button>
+                </div>
+                {resumeError && (
+                  <p className="text-xs text-red-400">{resumeError}</p>
+                )}
               </div>
             </div>
           )}
@@ -351,6 +475,14 @@ export function Sidebar() {
                   {session.notes}
                 </p>
               )}
+              {session.initialPrompt && (
+                <p
+                  className="text-xs text-zinc-500 mb-3 pb-3 border-b border-border line-clamp-2"
+                  title={session.initialPrompt}
+                >
+                  <span className="text-zinc-600">Started with: </span>{session.initialPrompt}
+                </p>
+              )}
               <div className="flex items-center gap-2 text-xs">
                 <Clock className="w-3 h-3 text-zinc-600 flex-shrink-0" />
                 <span className="text-zinc-500">Started</span>
@@ -372,6 +504,19 @@ export function Sidebar() {
                   <span className="text-purple-400 font-mono ml-auto">
                     {session.gitBranch}
                   </span>
+                </div>
+              )}
+              {session.claudeSessionId && (
+                <div className="flex items-center gap-2 text-xs">
+                  <TerminalIcon className="w-3 h-3 text-zinc-600 flex-shrink-0" />
+                  <span className="text-zinc-500">Claude session</span>
+                  <button
+                    onClick={() => navigator.clipboard?.writeText(`claude --resume ${session.claudeSessionId}`).catch(() => {})}
+                    title={`Copy: claude --resume ${session.claudeSessionId}`}
+                    className="text-zinc-400 font-mono ml-auto truncate max-w-[220px] hover:text-white transition-colors"
+                  >
+                    {session.claudeSessionId}
+                  </button>
                 </div>
               )}
             </div>

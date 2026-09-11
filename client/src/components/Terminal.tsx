@@ -89,6 +89,10 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
 
     let ws: WebSocket | null = null;
     let isFirstMessage = true;
+    // True while replayed history is being parsed; xterm answers terminal
+    // queries in that stream synchronously via onData, and those answers
+    // must not reach the PTY
+    let replayingHistory = false;
 
     const connectWs = () => {
       if (!mountedRef.current) return;
@@ -112,7 +116,12 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
               // Clear screen, reset attributes, move cursor home
               term.write("\x1b[2J\x1b[H\x1b[0m");
             }
-            term.write(msg.data);
+            if (msg.history) {
+              replayingHistory = true;
+              term.write(msg.data, () => { replayingHistory = false; });
+            } else {
+              term.write(msg.data);
+            }
           } else if (msg.type === "status") {
             // Handle status updates from plugin hooks
             updateSession(nodeId, {
@@ -139,6 +148,7 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
     const connectTimeout = setTimeout(connectWs, 100);
 
     term.onData((data) => {
+      if (replayingHistory) return;
       if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "input", data }));
       }

@@ -8,6 +8,7 @@ import {
   Cpu,
   FolderOpen,
   Terminal,
+  MessageSquare,
   Plus,
   Minus,
   Search,
@@ -162,6 +163,7 @@ export function NewSessionModal({
   const [cwd, setCwd] = useState("");
   const [customName, setCustomName] = useState("");
   const [commandArgs, setCommandArgs] = useState("");
+  const [initialPrompt, setInitialPrompt] = useState("");
   const [count, setCount] = useState(1);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -207,12 +209,14 @@ export function NewSessionModal({
         setCwd(existingSession.cwd);
         setCustomName(existingSession.customName || "");
         setCommandArgs("");
+        setInitialPrompt("");
         setCount(1);
       } else {
         setSelectedAgent(null);
         setCwd("");
         setCustomName("");
         setCommandArgs("");
+        setInitialPrompt("");
         setCount(1);
       }
       setActiveTab("blank");
@@ -401,6 +405,7 @@ export function NewSessionModal({
             nodeId: existingNodeId,
             customName: customName || existingSession.customName,
             customColor: existingSession.customColor,
+            initialPrompt: initialPrompt.trim() || undefined,
             // Ticket info if selected (Linear or GitHub)
             ...(selectedTicket && {
               ticketId: selectedTicket.identifier,
@@ -467,6 +472,7 @@ export function NewSessionModal({
               cwd: workingDir,
               nodeId,
               customName: count > 1 ? agentName : customName || undefined,
+              initialPrompt: initialPrompt.trim() || undefined,
               // Ticket info if selected (only for first agent)
               ...(i === 0 && selectedTicket && {
                 ticketId: selectedTicket.identifier,
@@ -984,6 +990,21 @@ export function NewSessionModal({
                         {selectedAgent.command}{selectedAgent.command && commandArgs ? " " : ""}{commandArgs}
                       </p>
                     )}
+                  </div>
+
+                  {/* Initial prompt */}
+                  <div className="space-y-2">
+                    <label className="text-xs text-zinc-500 flex items-center gap-1.5">
+                      <MessageSquare className="w-3 h-3" />
+                      Initial prompt (optional)
+                    </label>
+                    <textarea
+                      value={initialPrompt}
+                      onChange={(e) => setInitialPrompt(e.target.value)}
+                      placeholder="Sent as the first message once the agent starts. Not re-sent on resume."
+                      rows={3}
+                      className="w-full px-3 py-2 rounded-md bg-canvas border border-border text-white text-sm placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors resize-y"
+                    />
                   </div>
 
                   {/* Working directory */}

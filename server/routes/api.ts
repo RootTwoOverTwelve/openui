@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, injectPluginDir } from "../services/sessionManager";
+import { sessions, createSession, deleteSession, buildLaunch, getUserShell } from "../services/sessionManager";
 import { loadState, saveState, savePositions, getDataDir } from "../services/persistence";
+import { debug } from "../services/log";
 import {
   loadConfig,
   saveConfig,
@@ -112,6 +113,8 @@ apiRoutes.get("/sessions", (c) => {
       isRestored: session.isRestored,
       ticketId: session.ticketId,
       ticketTitle: session.ticketTitle,
+      claudeSessionId: session.claudeSessionId,
+      initialPrompt: session.initialPrompt,
     };
   });
   return c.json(sessionList);
@@ -174,6 +177,7 @@ apiRoutes.post("/sessions", async (c) => {
     branchName,
     baseBranch,
     createWorktree: createWorktreeFlag,
+    initialPrompt,
   } = body;
 
   const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -199,6 +203,7 @@ apiRoutes.post("/sessions", async (c) => {
     baseBranch,
     createWorktreeFlag,
     ticketPromptTemplate,
+    initialPrompt,
   });
 
   saveState(sessions);
@@ -216,11 +221,29 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
   if (!session) return c.json({ error: "Session not found" }, 404);
   if (session.pty) return c.json({ error: "Session already running" }, 400);
 
+  // Resume the previous Claude conversation if we know its ID and the
+  // original command doesn't already pin one.
+  const canResume =
+    session.agentId === "claude" &&
+    !!session.claudeSessionId &&
+    !/--resume\b|--continue\b|(^|\s)-[cr]\b/.test(session.command);
+  // On resume the conversation already has the initial prompt, so it is only
+  // re-sent when we're starting the agent over from scratch.
+  const launch = canResume
+    ? { command: buildLaunch({ sessionId, agentId: session.agentId, command: `${session.command} --resume ${session.claudeSessionId}` }).command }
+    : buildLaunch({ sessionId, agentId: session.agentId, command: session.command, initialPrompt: session.initialPrompt });
+
   const { spawn } = await import("bun-pty");
-  const ptyProcess = spawn("/bin/bash", [], {
+  const shell = getUserShell();
+  const ptyProcess = spawn(shell.file, shell.args, {
     name: "xterm-256color",
     cwd: session.cwd,
-    env: { ...process.env, TERM: "xterm-256color" },
+    env: {
+      ...process.env,
+      TERM: "xterm-256color",
+      // Pass our session ID so the plugin can include it in status updates
+      OPENUI_SESSION_ID: sessionId,
+    },
     rows: 30,
     cols: 120,
   });
@@ -229,6 +252,10 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
   session.isRestored = false;
   session.status = "running";
   session.lastOutputTime = Date.now();
+  // Drop the old process's scrollback: it is full of TUI control sequences
+  // that would be replayed into the new shell. A resumed Claude session
+  // re-renders its own conversation history anyway.
+  session.outputBuffer = [];
 
   const resetInterval = setInterval(() => {
     if (!sessions.has(sessionId) || !session.pty) {
@@ -254,13 +281,18 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
     }
   });
 
-  const finalCommand = injectPluginDir(session.command, session.agentId);
   setTimeout(() => {
-    ptyProcess.write(`${finalCommand}\r`);
+    ptyProcess.write(`${launch.command}\r`);
+    if (launch.typedPrompt) {
+      setTimeout(() => {
+        ptyProcess.write(launch.typedPrompt + "\r");
+      }, 2000);
+    }
   }, 300);
 
-  log(`\x1b[38;5;141m[session]\x1b[0m Restarted ${sessionId}`);
-  return c.json({ success: true });
+  saveState(sessions);
+  log(`\x1b[38;5;141m[session]\x1b[0m ${canResume ? "Resumed" : "Restarted"} ${sessionId}${canResume ? ` (claude: ${session.claudeSessionId})` : ""}`);
+  return c.json({ success: true, resumed: canResume });
 });
 
 apiRoutes.patch("/sessions/:sessionId", async (c) => {
@@ -291,11 +323,11 @@ apiRoutes.delete("/sessions/:sessionId", (c) => {
 // Status update endpoint for Claude Code plugin
 apiRoutes.post("/status-update", async (c) => {
   const body = await c.req.json();
-  const { status, openuiSessionId, claudeSessionId, cwd, hookEvent, toolName, stopReason } = body;
+  const { status, openuiSessionId, claudeSessionId, cwd, hookEvent, toolName, stopReason, sessionSource } = body;
 
   // Log the full raw payload for debugging
-  log(`\x1b[38;5;82m[plugin-hook]\x1b[0m ${hookEvent || 'unknown'}: status=${status} tool=${toolName || 'none'} openui=${openuiSessionId || 'none'}`);
-  log(`\x1b[38;5;245m[plugin-raw]\x1b[0m ${JSON.stringify(body, null, 2)}`);
+  debug(`\x1b[38;5;82m[plugin-hook]\x1b[0m ${hookEvent || 'unknown'}: status=${status} tool=${toolName || 'none'} openui=${openuiSessionId || 'none'}${sessionSource ? ` source=${sessionSource}` : ''}`);
+  debug(`\x1b[38;5;245m[plugin-raw]\x1b[0m ${JSON.stringify(body, null, 2)}`);
 
   if (!status) {
     return c.json({ error: "status is required" }, 400);
@@ -319,9 +351,12 @@ apiRoutes.post("/status-update", async (c) => {
   }
 
   if (session) {
-    // Store Claude session ID mapping if we have it
-    if (claudeSessionId && !session.claudeSessionId) {
+    // Store Claude session ID mapping if we have it. Latest wins so a
+    // resumed/forked session stays resumable. Persist right away so it
+    // survives an unclean shutdown before the next periodic save.
+    if (claudeSessionId && session.claudeSessionId !== claudeSessionId) {
       session.claudeSessionId = claudeSessionId;
+      saveState(sessions);
     }
 
     // Handle pre_tool/post_tool for permission detection
@@ -401,7 +436,7 @@ apiRoutes.post("/status-update", async (c) => {
   }
 
   // No session found
-  log(`\x1b[38;5;141m[plugin]\x1b[0m Status update (no session): ${status} for openui:${openuiSessionId} claude:${claudeSessionId}`);
+  debug(`\x1b[38;5;141m[plugin]\x1b[0m Status update (no session): ${status} for openui:${openuiSessionId} claude:${claudeSessionId}`);
   return c.json({ success: true, warning: "No matching session found" });
 });
 
@@ -530,21 +565,21 @@ apiRoutes.get("/linear/teams", async (c) => {
 
 // Get my tickets
 apiRoutes.get("/linear/tickets", async (c) => {
-  log(`\x1b[38;5;141m[api]\x1b[0m GET /linear/tickets called`);
+  debug(`\x1b[38;5;141m[api]\x1b[0m GET /linear/tickets called`);
   const config = loadConfig();
-  log(`\x1b[38;5;141m[api]\x1b[0m Config loaded, hasApiKey:`, !!config.apiKey);
+  debug(`\x1b[38;5;141m[api]\x1b[0m Config loaded, hasApiKey:`, !!config.apiKey);
 
   if (!config.apiKey) {
-    log(`\x1b[38;5;141m[api]\x1b[0m No API key, returning 400`);
+    debug(`\x1b[38;5;141m[api]\x1b[0m No API key, returning 400`);
     return c.json({ error: "Linear not configured" }, 400);
   }
 
   const teamId = c.req.query("teamId") || config.defaultTeamId;
-  log(`\x1b[38;5;141m[api]\x1b[0m TeamId:`, teamId || "(none)");
+  debug(`\x1b[38;5;141m[api]\x1b[0m TeamId:`, teamId || "(none)");
 
   try {
     const tickets = await fetchMyTickets(config.apiKey, teamId);
-    log(`\x1b[38;5;141m[api]\x1b[0m Returning ${tickets.length} tickets`);
+    debug(`\x1b[38;5;141m[api]\x1b[0m Returning ${tickets.length} tickets`);
     return c.json(tickets);
   } catch (e: any) {
     logError(`\x1b[38;5;141m[api]\x1b[0m Error fetching tickets:`, e.message);

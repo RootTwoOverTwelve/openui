@@ -33,6 +33,10 @@ export interface AgentSession {
   ticketTitle?: string;
   // Current tool being used (from plugin)
   currentTool?: string;
+  // Claude Code's internal session ID (enables resume)
+  claudeSessionId?: string;
+  // First message sent when the session was spawned
+  initialPrompt?: string;
 }
 
 interface AppState {

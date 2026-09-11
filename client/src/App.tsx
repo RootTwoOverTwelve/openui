@@ -16,6 +16,11 @@ import { useStore } from "./stores/useStore";
 import { AgentNode } from "./components/AgentNode/index";
 import { CategoryNode } from "./components/CategoryNode";
 import { Sidebar } from "./components/Sidebar";
+
+function readSessionFromHash(): string | null {
+  const m = window.location.hash.match(/^#\/session\/([^/?]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
 import { NewSessionModal } from "./components/NewSessionModal";
 import { Header } from "./components/Header";
 import { CanvasControls } from "./components/CanvasControls";
@@ -43,6 +48,8 @@ function AppContent() {
     newSessionForNodeId,
     setNewSessionForNodeId,
     sessions,
+    selectedNodeId,
+    sidebarOpen,
   } = useStore();
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);
@@ -87,6 +94,9 @@ function AppContent() {
               if (existing && existing.status !== sessionData.status) {
                 console.log(`[poll] Updating ${sessionData.nodeId} status: ${existing.status} -> ${sessionData.status}`);
                 updateSession(sessionData.nodeId, { status: sessionData.status });
+              }
+              if (existing && sessionData.claudeSessionId && existing.claudeSessionId !== sessionData.claudeSessionId) {
+                updateSession(sessionData.nodeId, { claudeSessionId: sessionData.claudeSessionId });
               }
             }
           }
@@ -158,6 +168,8 @@ function AppContent() {
             isRestored: session.isRestored,
             ticketId: session.ticketId,
             ticketTitle: session.ticketTitle,
+            claudeSessionId: session.claudeSessionId,
+            initialPrompt: session.initialPrompt,
           });
 
           restoredNodes.push({
@@ -177,9 +189,43 @@ function AppContent() {
         hasRestoredRef.current = true;
         setNodes(restoredNodes);
         setStoreNodes(restoredNodes);
+
+        // Deep link: #/session/<sessionId> reopens that session's panel
+        const linked = sessions.find((s: any) => s.sessionId === readSessionFromHash());
+        if (linked) {
+          setSelectedNodeId(linked.nodeId);
+          setSidebarOpen(true);
+        }
       })
       .catch(console.error);
-  }, [agents, addSession, setNodes, setStoreNodes]);
+  }, [agents, addSession, setNodes, setStoreNodes, setSelectedNodeId, setSidebarOpen]);
+
+  // Keep the URL hash in sync with the open session so reloads and
+  // bookmarks land back on it
+  useEffect(() => {
+    const session = selectedNodeId && sidebarOpen ? sessions.get(selectedNodeId) : null;
+    const target = session ? `#/session/${session.sessionId}` : "";
+    if (window.location.hash !== target) {
+      history.replaceState(null, "", target || window.location.pathname + window.location.search);
+    }
+  }, [selectedNodeId, sidebarOpen, sessions]);
+
+  // Back/forward or a pasted hash after load
+  useEffect(() => {
+    const onHashChange = () => {
+      const sessionId = readSessionFromHash();
+      if (!sessionId) return;
+      for (const [nodeId, s] of useStore.getState().sessions) {
+        if (s.sessionId === sessionId) {
+          setSelectedNodeId(nodeId);
+          setSidebarOpen(true);
+          return;
+        }
+      }
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [setSelectedNodeId, setSidebarOpen]);
 
   // Helper to save all positions - accepts nodes directly to avoid sync issues
   const saveAllPositions = useCallback((nodesToSave?: typeof nodes) => {

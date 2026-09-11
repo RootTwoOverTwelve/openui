@@ -4,7 +4,8 @@ import { existsSync, mkdirSync } from "fs";
 import { join, basename } from "path";
 import { homedir } from "os";
 import type { Session } from "../types";
-import { loadBuffer } from "./persistence";
+import { loadBuffer, writePromptFile, removePromptFile } from "./persistence";
+import { debug } from "./log";
 
 const QUIET = !!process.env.OPENUI_QUIET;
 const log = QUIET ? () => {} : console.log.bind(console);
@@ -15,7 +16,7 @@ function getPluginDir(): string | null {
   // Check for plugin in ~/.openui/claude-code-plugin (installed via curl)
   const homePluginDir = join(homedir(), ".openui", "claude-code-plugin");
   const homePluginJson = join(homePluginDir, ".claude-plugin", "plugin.json");
-  log(`\x1b[38;5;245m[plugin-check]\x1b[0m Checking home: ${homePluginJson} exists=${existsSync(homePluginJson)}`);
+  debug(`\x1b[38;5;245m[plugin-check]\x1b[0m Checking home: ${homePluginJson} exists=${existsSync(homePluginJson)}`);
   if (existsSync(homePluginJson)) {
     return homePluginDir;
   }
@@ -25,13 +26,48 @@ function getPluginDir(): string | null {
   const currentDir = import.meta.dir || __dirname;
   const repoPluginDir = join(currentDir, "..", "..", "claude-code-plugin");
   const repoPluginJson = join(repoPluginDir, ".claude-plugin", "plugin.json");
-  log(`\x1b[38;5;245m[plugin-check]\x1b[0m Checking repo: ${repoPluginJson} exists=${existsSync(repoPluginJson)}`);
+  debug(`\x1b[38;5;245m[plugin-check]\x1b[0m Checking repo: ${repoPluginJson} exists=${existsSync(repoPluginJson)}`);
   if (existsSync(repoPluginJson)) {
     return repoPluginDir;
   }
 
-  log(`\x1b[38;5;245m[plugin-check]\x1b[0m No plugin found`);
+  debug(`\x1b[38;5;245m[plugin-check]\x1b[0m No plugin found`);
   return null;
+}
+
+// The shell agents run in. A login shell sources the user's rc files so
+// PATH (and therefore `claude`) resolves the same way it does in their
+// terminal, regardless of the environment the server was launched from.
+export function getUserShell(): { file: string; args: string[] } {
+  const shell = process.env.SHELL;
+  const file = shell && existsSync(shell) ? shell : "/bin/bash";
+  return { file, args: ["-l"] };
+}
+
+// Wrap a string in single quotes for the shell
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+// Build the command that starts the agent, plus how to deliver the initial
+// prompt: Claude Code takes it as a positional argument; other agents get it
+// typed into the PTY once they've had a moment to start.
+export function buildLaunch(params: {
+  sessionId: string;
+  agentId: string;
+  command: string;
+  initialPrompt?: string;
+}): { command: string; typedPrompt?: string } {
+  const { sessionId, agentId, command, initialPrompt } = params;
+  const base = injectPluginDir(command, agentId);
+  const prompt = initialPrompt?.trim();
+  if (!prompt) return { command: base };
+
+  if (agentId === "claude") {
+    const promptFile = writePromptFile(sessionId, prompt);
+    return { command: `${base} "$(cat ${shellQuote(promptFile)})"` };
+  }
+  return { command: base, typedPrompt: prompt };
 }
 
 // Inject --plugin-dir flag for Claude commands if plugin is available
@@ -50,8 +86,8 @@ export function injectPluginDir(command: string, agentId: string): string {
     // Use the path directly without quotes - shell will handle it
     parts.splice(1, 0, `--plugin-dir`, pluginDir);
     const finalCmd = parts.join(" ");
-    log(`\x1b[38;5;141m[plugin]\x1b[0m Injecting plugin-dir: ${pluginDir}`);
-    log(`\x1b[38;5;141m[plugin]\x1b[0m Final command: ${finalCmd}`);
+    debug(`\x1b[38;5;141m[plugin]\x1b[0m Injecting plugin-dir: ${pluginDir}`);
+    debug(`\x1b[38;5;141m[plugin]\x1b[0m Final command: ${finalCmd}`);
     return finalCmd;
   }
 
@@ -222,6 +258,7 @@ export function createSession(params: {
   baseBranch?: string;
   createWorktreeFlag?: boolean;
   ticketPromptTemplate?: string;
+  initialPrompt?: string;
 }): { session: Session; cwd: string; gitBranch?: string } {
   const {
     sessionId,
@@ -239,6 +276,7 @@ export function createSession(params: {
     baseBranch,
     createWorktreeFlag,
     ticketPromptTemplate,
+    initialPrompt,
   } = params;
 
   let workingDir = originalCwd;
@@ -278,7 +316,8 @@ export function createSession(params: {
     gitBranch = getGitBranch(workingDir);
   }
 
-  const ptyProcess = spawnPty("/bin/bash", [], {
+  const shell = getUserShell();
+  const ptyProcess = spawnPty(shell.file, shell.args, {
     name: "xterm-256color",
     cwd: workingDir,
     env: {
@@ -315,6 +354,7 @@ export function createSession(params: {
     ticketId,
     ticketTitle,
     ticketUrl,
+    initialPrompt: initialPrompt?.trim() || undefined,
   };
 
   sessions.set(sessionId, session);
@@ -347,10 +387,18 @@ export function createSession(params: {
   });
 
   // Run the command (inject plugin-dir for Claude if available)
-  const finalCommand = injectPluginDir(command, agentId);
-  log(`\x1b[38;5;82m[pty-write]\x1b[0m Writing command: ${finalCommand}`);
+  const launch = buildLaunch({ sessionId, agentId, command, initialPrompt: session.initialPrompt });
+  const finalCommand = launch.command;
+  debug(`\x1b[38;5;82m[pty-write]\x1b[0m Writing command: ${finalCommand}`);
   setTimeout(() => {
     ptyProcess.write(`${finalCommand}\r`);
+
+    // Non-Claude agents: type the initial prompt once the agent is up
+    if (launch.typedPrompt) {
+      setTimeout(() => {
+        ptyProcess.write(launch.typedPrompt + "\r");
+      }, 2000);
+    }
 
     // If there's a ticket URL, send it to the agent after a delay
     if (ticketUrl) {
@@ -378,6 +426,7 @@ export function deleteSession(sessionId: string) {
   if (session.pty) session.pty.kill();
 
   sessions.delete(sessionId);
+  removePromptFile(sessionId);
   log(`\x1b[38;5;141m[session]\x1b[0m Killed ${sessionId}`);
   return true;
 }
@@ -411,9 +460,11 @@ export function restoreSessions() {
       notes: node.notes,
       nodeId: node.nodeId,
       isRestored: true,
+      claudeSessionId: node.claudeSessionId,
+      initialPrompt: node.initialPrompt,
     };
 
     sessions.set(node.sessionId, session);
-    log(`\x1b[38;5;245m[restore]\x1b[0m Restored ${node.sessionId} (${node.agentName}) branch: ${gitBranch || 'none'}`);
+    log(`\x1b[38;5;245m[restore]\x1b[0m Restored ${node.sessionId} (${node.agentName}) branch: ${gitBranch || 'none'} claude: ${node.claudeSessionId || 'none'}`);
   }
 }

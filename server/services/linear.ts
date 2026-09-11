@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { LinearTicket, LinearConfig } from "../types";
+import { debug } from "./log";
 
 const LAUNCH_CWD = process.env.LAUNCH_CWD || process.cwd();
 const CONFIG_FILE = join(LAUNCH_CWD, ".openui", "config.json");
@@ -70,10 +71,10 @@ export function loadConfig(): LinearConfig {
   // API key from .env file (or process.env as fallback)
   config.apiKey = envVars.LINEAR_API_KEY || process.env.LINEAR_API_KEY;
 
-  console.log(`\x1b[38;5;141m[linear]\x1b[0m Loading config from:`, ENV_FILE);
-  console.log(`\x1b[38;5;141m[linear]\x1b[0m ENV file exists:`, existsSync(ENV_FILE));
-  console.log(`\x1b[38;5;141m[linear]\x1b[0m API key from env vars:`, !!envVars.LINEAR_API_KEY, envVars.LINEAR_API_KEY ? `(${envVars.LINEAR_API_KEY.substring(0, 10)}...)` : '');
-  console.log(`\x1b[38;5;141m[linear]\x1b[0m API key from process.env:`, !!process.env.LINEAR_API_KEY);
+  debug(`\x1b[38;5;141m[linear]\x1b[0m Loading config from:`, ENV_FILE);
+  debug(`\x1b[38;5;141m[linear]\x1b[0m ENV file exists:`, existsSync(ENV_FILE));
+  debug(`\x1b[38;5;141m[linear]\x1b[0m API key from env vars:`, !!envVars.LINEAR_API_KEY, envVars.LINEAR_API_KEY ? `(${envVars.LINEAR_API_KEY.substring(0, 10)}...)` : '');
+  debug(`\x1b[38;5;141m[linear]\x1b[0m API key from process.env:`, !!process.env.LINEAR_API_KEY);
 
   // Other settings from config.json
   try {
@@ -201,11 +202,11 @@ export async function fetchMyTickets(apiKey: string, teamId?: string): Promise<L
     }
   `;
 
-  console.log(`\x1b[38;5;141m[linear]\x1b[0m Fetching tickets with filter:`, filterParts.join(", "));
+  debug(`\x1b[38;5;141m[linear]\x1b[0m Fetching tickets with filter:`, filterParts.join(", "));
 
   const data = await linearQuery(apiKey, query);
 
-  console.log(`\x1b[38;5;141m[linear]\x1b[0m Tickets found:`, data.issues?.nodes?.length || 0);
+  debug(`\x1b[38;5;141m[linear]\x1b[0m Tickets found:`, data.issues?.nodes?.length || 0);
 
   return data.issues.nodes;
 }
