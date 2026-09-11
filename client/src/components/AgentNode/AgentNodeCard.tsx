@@ -26,6 +26,13 @@ const toolDisplayNames: Record<string, string> = {
   AskUserQuestion: "Asking",
 };
 
+// Green while comfortable, amber as compaction approaches, red when close
+export function contextColor(pct: number): string {
+  if (pct >= 85) return "#EF4444";
+  if (pct >= 65) return "#FBBF24";
+  return "#22C55E";
+}
+
 interface AgentNodeCardProps {
   selected: boolean;
   displayColor: string;
@@ -39,6 +46,7 @@ interface AgentNodeCardProps {
   gitBranch?: string;
   ticketId?: string;
   ticketTitle?: string;
+  contextUsage?: { tokens: number; limit: number; pct: number };
 }
 
 export function AgentNodeCard({
@@ -54,6 +62,7 @@ export function AgentNodeCard({
   gitBranch,
   ticketId,
   ticketTitle,
+  contextUsage,
 }: AgentNodeCardProps) {
   // agentId is available for future use if needed
   void agentId;
@@ -181,6 +190,22 @@ export function AgentNodeCard({
             {ticketTitle && (
               <p className="text-[10px] text-indigo-300/70 truncate mt-0.5">{ticketTitle}</p>
             )}
+          </div>
+        )}
+
+        {/* Context usage: how close this session is to compaction */}
+        {contextUsage && (
+          <div className="mt-2.5" title={`Context: ${contextUsage.tokens.toLocaleString()} of ${(contextUsage.limit / 1000).toLocaleString()}k tokens (${contextUsage.pct}%)`}>
+            <div className="flex items-center justify-between text-[10px] leading-none mb-1">
+              <span className="text-zinc-500">Context</span>
+              <span style={{ color: contextColor(contextUsage.pct) }}>{Math.round(contextUsage.pct)}%</span>
+            </div>
+            <div className="h-1 rounded-full bg-white/10 overflow-hidden">
+              <div
+                className="h-full rounded-full transition-[width] duration-500"
+                style={{ width: `${Math.min(100, contextUsage.pct)}%`, backgroundColor: contextColor(contextUsage.pct) }}
+              />
+            </div>
           </div>
         )}
 

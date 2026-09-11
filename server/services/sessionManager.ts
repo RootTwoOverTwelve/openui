@@ -6,6 +6,7 @@ import { homedir } from "os";
 import type { Session, PersistedNode, ForkOrigin, ForkKind } from "../types";
 import { loadBuffer, writePromptFile, removePromptFile } from "./persistence";
 import { debug } from "./log";
+import { readContextUsage } from "./context";
 
 const QUIET = !!process.env.OPENUI_QUIET;
 const log = QUIET ? () => {} : console.log.bind(console);
@@ -524,6 +525,9 @@ export function reviveSession(node: PersistedNode): Session {
     systemPrompt: node.systemPrompt,
     forkedFrom: node.forkedFrom,
     forkKind: node.forkKind,
+    transcriptPath: node.transcriptPath,
+    model: node.model,
+    contextUsage: node.transcriptPath ? readContextUsage(node.transcriptPath, node.model) || undefined : undefined,
   };
   sessions.set(node.sessionId, session);
   return session;
@@ -567,6 +571,9 @@ export function restoreSessions() {
       systemPrompt: node.systemPrompt,
       forkedFrom: node.forkedFrom,
       forkKind: node.forkKind,
+      transcriptPath: node.transcriptPath,
+      model: node.model,
+      contextUsage: node.transcriptPath ? readContextUsage(node.transcriptPath, node.model) || undefined : undefined,
     };
 
     sessions.set(node.sessionId, session);

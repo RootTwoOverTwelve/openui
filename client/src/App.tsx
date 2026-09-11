@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -8,6 +8,7 @@ import {
   ReactFlowProvider,
   NodeChange,
   applyNodeChanges,
+  type Viewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Plus } from "lucide-react";
@@ -20,6 +21,20 @@ import { ForkModal } from "./components/ForkModal";
 
 const GRID_SIZE = 24;
 const snap = (v: number) => Math.round(v / GRID_SIZE) * GRID_SIZE;
+
+// Pan/zoom is a per-browser preference, keyed by project so two OpenUI
+// instances on the same origin don't share one
+const viewportKey = (cwd: string | null | undefined) => `openui-viewport:${cwd || "default"}`;
+
+function loadViewport(cwd: string | null | undefined): Viewport | null {
+  try {
+    const raw = localStorage.getItem(viewportKey(cwd));
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    if (typeof v?.x === "number" && typeof v?.y === "number" && typeof v?.zoom === "number") return v;
+  } catch {}
+  return null;
+}
 
 function nodeSize(node: any, fallbackW: number, fallbackH: number) {
   const width = node.measured?.width || node.width || (typeof node.style?.width === "number" ? node.style.width : parseInt(node.style?.width) || fallbackW);
@@ -94,6 +109,7 @@ function AppContent() {
     nodes: storeNodes,
     setNodes: setStoreNodes,
     setAgents,
+    launchCwd,
     setLaunchCwd,
     setSelectedNodeId,
     setSidebarOpen,
@@ -114,6 +130,27 @@ function AppContent() {
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);
   const positionUpdateTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasRestoredRef = useRef(false);
+
+  // Saved viewport, resolved once launchCwd is known. Until then the canvas
+  // isn't rendered, so React Flow gets the right initial viewport (or
+  // fitView when there is none) on its very first mount.
+  const [savedViewport, setSavedViewport] = useState<Viewport | null | undefined>(undefined);
+  useEffect(() => {
+    if (savedViewport !== undefined) return;
+    if (launchCwd) {
+      setSavedViewport(loadViewport(launchCwd));
+      return;
+    }
+    // Config never answered: don't hold the canvas hostage
+    const fallback = setTimeout(() => setSavedViewport(loadViewport(null)), 3000);
+    return () => clearTimeout(fallback);
+  }, [launchCwd, savedViewport]);
+
+  const onMoveEnd = useCallback((_: unknown, viewport: Viewport) => {
+    try {
+      localStorage.setItem(viewportKey(launchCwd), JSON.stringify(viewport));
+    } catch {}
+  }, [launchCwd]);
 
   // Sync nodes with store
   useEffect(() => {
@@ -156,6 +193,9 @@ function AppContent() {
               }
               if (existing && sessionData.claudeSessionId && existing.claudeSessionId !== sessionData.claudeSessionId) {
                 updateSession(sessionData.nodeId, { claudeSessionId: sessionData.claudeSessionId });
+              }
+              if (existing && sessionData.contextUsage && existing.contextUsage?.at !== sessionData.contextUsage.at) {
+                updateSession(sessionData.nodeId, { contextUsage: sessionData.contextUsage, model: sessionData.model });
               }
             }
           }
@@ -239,6 +279,8 @@ function AppContent() {
             systemPrompt: session.systemPrompt,
             forkedFrom: session.forkedFrom,
             forkKind: session.forkKind,
+            model: session.model,
+            contextUsage: session.contextUsage,
           });
 
           restoredNodes.push({
@@ -406,14 +448,17 @@ function AppContent() {
       <Header />
 
       <div className="flex-1 relative">
+        {savedViewport !== undefined && (
         <ReactFlow
           nodes={nodes}
           edges={[]}
           onNodesChange={handleNodesChange}
           onNodeClick={onNodeClick}
           onPaneClick={onPaneClick}
+          onMoveEnd={onMoveEnd}
           nodeTypes={nodeTypes}
-          fitView
+          fitView={!savedViewport}
+          defaultViewport={savedViewport || undefined}
           proOptions={{ hideAttribution: true }}
           minZoom={0.3}
           maxZoom={2}
@@ -434,6 +479,7 @@ function AppContent() {
           />
           <CanvasControls />
         </ReactFlow>
+        )}
 
         {/* Empty state */}
         {isEmpty && (

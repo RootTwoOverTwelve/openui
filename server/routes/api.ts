@@ -3,6 +3,7 @@ import type { Agent } from "../types";
 import { sessions, createSession, deleteSession, buildLaunch, resumeFlags, getUserShell, findClaudeSession, reviveSession, typeAndSubmit } from "../services/sessionManager";
 import { loadState, saveState, savePositions, writeState, sessionToNode, getDataDir, type NodePlacement } from "../services/persistence";
 import { debug } from "../services/log";
+import { readContextUsage } from "../services/context";
 import {
   loadConfig,
   saveConfig,
@@ -130,6 +131,8 @@ apiRoutes.get("/sessions", (c) => {
       systemPrompt: session.systemPrompt,
       forkedFrom: session.forkedFrom,
       forkKind: session.forkKind,
+      model: session.model,
+      contextUsage: session.contextUsage,
     };
   });
   return c.json(sessionList);
@@ -519,7 +522,7 @@ apiRoutes.delete("/sessions/:sessionId", (c) => {
 // Status update endpoint for Claude Code plugin
 apiRoutes.post("/status-update", async (c) => {
   const body = await c.req.json();
-  const { status, openuiSessionId, claudeSessionId, cwd, hookEvent, toolName, stopReason, sessionSource } = body;
+  const { status, openuiSessionId, claudeSessionId, cwd, hookEvent, toolName, stopReason, sessionSource, transcriptPath, model } = body;
 
   // Log the full raw payload for debugging
   debug(`\x1b[38;5;82m[plugin-hook]\x1b[0m ${hookEvent || 'unknown'}: status=${status} tool=${toolName || 'none'} openui=${openuiSessionId || 'none'}${sessionSource ? ` source=${sessionSource}` : ''}`);
@@ -553,6 +556,20 @@ apiRoutes.post("/status-update", async (c) => {
     if (claudeSessionId && session.claudeSessionId !== claudeSessionId) {
       session.claudeSessionId = claudeSessionId;
       saveState(sessions);
+    }
+
+    // Context usage comes from the transcript tail. Refresh on turn
+    // boundaries, throttled so a burst of tool hooks doesn't re-read it.
+    if (transcriptPath) session.transcriptPath = transcriptPath;
+    if (model) session.model = model;
+    if (session.transcriptPath) {
+      const now = Date.now();
+      const turnBoundary = hookEvent === "Stop" || hookEvent === "SessionStart" || hookEvent === "UserPromptSubmit";
+      if (turnBoundary || !session.lastContextReadAt || now - session.lastContextReadAt > 5000) {
+        session.lastContextReadAt = now;
+        const usage = readContextUsage(session.transcriptPath, session.model);
+        if (usage) session.contextUsage = usage;
+      }
     }
 
     // The fork has booted and taken its snapshot of the parent: now the

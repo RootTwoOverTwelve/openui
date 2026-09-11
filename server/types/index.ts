@@ -1,5 +1,6 @@
 import type { IPty } from "bun-pty";
 import type { ServerWebSocket } from "bun";
+import type { ContextUsage } from "../services/context";
 
 export type AgentStatus = "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error";
 
@@ -43,6 +44,12 @@ export interface Session {
   // Fork lineage
   forkedFrom?: ForkOrigin;
   forkKind?: ForkKind;
+  // Where Claude Code writes this session's transcript, and which model runs
+  // it (both reported by the plugin hooks); used to read context usage
+  transcriptPath?: string;
+  model?: string;
+  contextUsage?: ContextUsage;
+  lastContextReadAt?: number;
   // Heads-up for the parent, held until this fork has booted (in-memory only)
   pendingParentNotice?: { parentSessionId: string; text: string; expiry: ReturnType<typeof setTimeout> };
   // Current tool being used (from plugin)
@@ -101,6 +108,8 @@ export interface PersistedNode {
   systemPrompt?: string;
   forkedFrom?: ForkOrigin;
   forkKind?: ForkKind;
+  transcriptPath?: string;
+  model?: string;
   // Archived: off the canvas and out of the live session map, but kept
   // so it can be restored without re-entering the Claude session ID
   archivedAt?: string;

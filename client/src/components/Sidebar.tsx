@@ -12,6 +12,8 @@ import {
   Check,
   LogOut,
   GitFork,
+  ChevronDown,
+  ChevronUp,
   Sparkles,
   Code,
   Cpu,
@@ -23,6 +25,9 @@ import {
   GitBranch,
 } from "lucide-react";
 import { useStore, AgentStatus, SIDEBAR_WIDTH_KEY, SIDEBAR_DEFAULT_WIDTH } from "../stores/useStore";
+import { contextColor } from "./AgentNode/AgentNodeCard";
+
+const DETAILS_OPEN_KEY = "openui-sidebar-details-open";
 import { Terminal } from "./Terminal";
 
 const statusConfig: Record<AgentStatus, { label: string; color: string }> = {
@@ -76,6 +81,15 @@ export function Sidebar() {
   const [editColor, setEditColor] = useState("");
   const [editIcon, setEditIcon] = useState("");
   const [terminalKey, setTerminalKey] = useState(0);
+  const [detailsOpen, setDetailsOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem(DETAILS_OPEN_KEY) === "1"; } catch { return false; }
+  });
+  const toggleDetails = () => {
+    setDetailsOpen((open) => {
+      try { localStorage.setItem(DETAILS_OPEN_KEY, open ? "0" : "1"); } catch {}
+      return !open;
+    });
+  };
   // Drag the left edge to resize the panel
   const handleResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -230,7 +244,7 @@ export function Sidebar() {
           exit={{ x: "100%", opacity: 0 }}
           transition={{ type: "spring", stiffness: 400, damping: 40 }}
           style={{ width: sidebarWidth, maxWidth: "100vw" }}
-          className="fixed right-0 top-14 bottom-0 z-50 flex flex-col bg-canvas-dark border-l border-border"
+          className="fixed right-0 top-11 bottom-0 z-50 flex flex-col bg-canvas-dark border-l border-border"
         >
           {/* Resize handle */}
           <div
@@ -243,7 +257,7 @@ export function Sidebar() {
           />
 
           {/* Header */}
-          <div className="flex-shrink-0 px-4 py-3 border-b border-border">
+          <div className="flex-shrink-0 px-3 py-2 border-b border-border">
             <div className="flex items-center gap-3">
               <div
                 className="w-3 h-3 rounded-full flex-shrink-0"
@@ -259,10 +273,28 @@ export function Sidebar() {
                     style={{ backgroundColor: statusInfo.color }}
                   />
                   <span className="text-[10px] text-zinc-500">{statusInfo.label}</span>
+                  {session.contextUsage && (
+                    <span
+                      className="text-[10px] ml-1"
+                      style={{ color: contextColor(session.contextUsage.pct) }}
+                      title={`Context: ${session.contextUsage.tokens.toLocaleString()} of ${(session.contextUsage.limit / 1000).toLocaleString()}k tokens`}
+                    >
+                      · {Math.round(session.contextUsage.pct)}% ctx
+                    </span>
+                  )}
                 </div>
               </div>
               
               <div className="flex items-center gap-1 flex-shrink-0">
+                {!isDisconnected && (
+                  <button
+                    onClick={handleNewSession}
+                    title="New session (replaces this agent's process)"
+                    className="w-7 h-7 rounded flex items-center justify-center text-zinc-500 hover:text-white hover:bg-surface-active transition-colors"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                  </button>
+                )}
                 <button
                   onClick={() => setIsEditing(!isEditing)}
                   className={`w-7 h-7 rounded flex items-center justify-center transition-colors ${
@@ -317,19 +349,6 @@ export function Sidebar() {
                   <p className="text-xs text-red-400">{resumeError}</p>
                 )}
               </div>
-            </div>
-          )}
-
-          {/* Session Management Controls */}
-          {!isDisconnected && !isEditing && (
-            <div className="flex-shrink-0 px-4 py-2 border-b border-border">
-              <button
-                onClick={handleNewSession}
-                className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-md bg-surface-active text-zinc-300 text-xs font-medium hover:bg-zinc-700 transition-colors"
-              >
-                <RotateCcw className="w-3 h-3" />
-                New Session
-              </button>
             </div>
           )}
 
@@ -470,18 +489,6 @@ export function Sidebar() {
 
           {/* Terminal */}
           <div className="flex-1 flex flex-col min-h-0">
-            <div className="flex-shrink-0 px-4 py-2 border-b border-border flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <TerminalIcon className="w-3.5 h-3.5 text-zinc-500" />
-                <span className="text-xs text-zinc-500">Terminal</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <div className="w-2.5 h-2.5 rounded-full bg-[#FF5F56]" />
-                <div className="w-2.5 h-2.5 rounded-full bg-[#FFBD2E]" />
-                <div className="w-2.5 h-2.5 rounded-full bg-[#27CA40]" />
-              </div>
-            </div>
-
             <div className="flex-1 min-h-0 bg-[#0d0d0d]">
               <Terminal
                 key={`${session.sessionId}-${terminalKey}`}
@@ -493,9 +500,21 @@ export function Sidebar() {
 
           </div>
 
-          {/* Details */}
+          {/* Details (collapsed by default to leave room for the terminal) */}
           <div className="flex-shrink-0 border-t border-border">
-            <div className="p-4 space-y-2">
+            <button
+              onClick={toggleDetails}
+              className="w-full px-4 py-1.5 flex items-center gap-2 text-[11px] text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.03] transition-colors"
+            >
+              {detailsOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
+              <span>Details</span>
+              {!detailsOpen && (
+                <span className="ml-auto font-mono text-zinc-600 truncate max-w-[60%]">
+                  {session.cwd.split('/').slice(-2).join('/')}{session.gitBranch ? ` · ${session.gitBranch}` : ""}
+                </span>
+              )}
+            </button>
+            <div className={`${detailsOpen ? "" : "hidden"} px-4 pb-4 pt-1 space-y-2`}>
               {session.notes && !isEditing && (
                 <p className="text-xs text-zinc-400 italic mb-3 pb-3 border-b border-border">
                   {session.notes}

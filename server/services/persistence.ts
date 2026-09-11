@@ -76,6 +76,8 @@ export function sessionToNode(sessionId: string, session: Session, existing?: Pe
     systemPrompt: session.systemPrompt,
     forkedFrom: session.forkedFrom,
     forkKind: session.forkKind,
+    transcriptPath: session.transcriptPath,
+    model: session.model,
   };
 }
 

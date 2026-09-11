@@ -60,6 +60,9 @@ export interface AgentSession {
   // Fork lineage
   forkedFrom?: { sessionId: string; claudeSessionId?: string; name?: string; at: string };
   forkKind?: "consult" | "develop";
+  model?: string;
+  // Live context size vs the model's window, read from the transcript
+  contextUsage?: { tokens: number; limit: number; pct: number; at: string };
 }
 
 interface AppState {
