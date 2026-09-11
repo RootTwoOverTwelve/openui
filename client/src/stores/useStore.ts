@@ -70,6 +70,8 @@ export interface AgentSession {
 interface AppState {
   // Config
   launchCwd: string;
+  workspace: string;
+  setWorkspace: (name: string) => void;
   setLaunchCwd: (cwd: string) => void;
 
   // Agents
@@ -116,6 +118,8 @@ export const useStore = create<AppState>((set) => ({
   // Config
   launchCwd: "",
   setLaunchCwd: (cwd) => set({ launchCwd: cwd }),
+  workspace: "",
+  setWorkspace: (name) => set({ workspace: name }),
 
   // Agents
   agents: [],

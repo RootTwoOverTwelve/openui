@@ -6,7 +6,7 @@ import { SettingsModal } from "./SettingsModal";
 import { ArchiveModal } from "./ArchiveModal";
 
 export function Header() {
-  const { setAddAgentModalOpen, sessions, launchCwd, archivedCount, refreshArchivedCount, archiveModalOpen, setArchiveModalOpen } = useStore();
+  const { setAddAgentModalOpen, sessions, launchCwd, workspace, archivedCount, refreshArchivedCount, archiveModalOpen, setArchiveModalOpen } = useStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
@@ -28,7 +28,10 @@ export function Header() {
         
         <div className="flex items-center gap-1.5 text-xs text-zinc-500">
           <Folder className="w-3 h-3" />
-          <span className="font-mono truncate max-w-[200px]">{launchCwd || "~"}</span>
+          <span className="font-mono truncate max-w-[200px]" title="Default directory for new agents">{launchCwd || "~"}</span>
+          {workspace && workspace !== "default" && (
+            <span className="ml-1 px-1.5 py-0.5 rounded bg-surface text-[10px] text-zinc-400" title="Workspace">{workspace}</span>
+          )}
         </div>
       </div>
 

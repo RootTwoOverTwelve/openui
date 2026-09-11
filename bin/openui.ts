@@ -13,6 +13,23 @@ const PORT = process.env.PORT || 6969;
 const LAUNCH_CWD = process.cwd();
 const IS_DEV = process.env.NODE_ENV === "development" || process.argv.includes("--dev");
 
+// `openui --workspace <name>` (or -w) picks a separate canvas; default is one
+// shared workspace no matter which directory you launch from
+function argValue(...flags: string[]): string | undefined {
+  for (const flag of flags) {
+    const i = process.argv.indexOf(flag);
+    if (i !== -1 && process.argv[i + 1]) return process.argv[i + 1];
+    const inline = process.argv.find((a) => a.startsWith(`${flag}=`));
+    if (inline) return inline.slice(flag.length + 1);
+  }
+  return undefined;
+}
+const WORKSPACE = argValue("--workspace", "-w") || process.env.OPENUI_WORKSPACE || "default";
+if (!/^[A-Za-z0-9._-]{1,64}$/.test(WORKSPACE)) {
+  console.error(`Invalid workspace name: ${WORKSPACE}`);
+  process.exit(1);
+}
+
 // Auto-install plugin if not present
 async function ensurePluginInstalled() {
   const pluginDir = join(homedir(), ".openui", "claude-code-plugin");
@@ -118,7 +135,7 @@ checkForUpdates();
 const server = Bun.spawn(["bun", "run", "server/index.ts"], {
   cwd: import.meta.dir + "/..",
   stdio: IS_DEV ? ["inherit", "inherit", "inherit"] : ["inherit", "ignore", "ignore"],
-  env: { ...process.env, PORT: String(PORT), LAUNCH_CWD, OPENUI_QUIET: IS_DEV ? "" : "1" }
+  env: { ...process.env, PORT: String(PORT), LAUNCH_CWD, OPENUI_WORKSPACE: WORKSPACE, OPENUI_QUIET: IS_DEV ? "" : "1" }
 });
 
 // Open browser

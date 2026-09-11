@@ -37,6 +37,8 @@ openui
 
 The browser opens at `http://localhost:6969`. **New Agent** spawns a Claude Code session in that directory; click a node to open its terminal.
 
+There is one canvas no matter where you launch from: state lives in `~/.openui/workspaces/default/`, and the launch directory is only the default working directory for new agents — so you can run agents rooted anywhere in a monorepo, or in different repos, from one screen. `openui --workspace <name>` opens a separate canvas. (State from an older `<project>/.openui/` is imported automatically the first time and left in place.)
+
 The server binds to `127.0.0.1` only and rejects requests from other origins, so it is not reachable from other machines or from other web pages.
 
 On first run the Claude Code plugin is copied to `~/.openui/claude-code-plugin/` — it reports status, context, and briefings back to OpenUI through Claude Code hooks. It is only fetched when missing, so after pulling a change to `claude-code-plugin/hooks/`, re-sync it by hand:
@@ -58,6 +60,8 @@ cp claude-code-plugin/hooks/* ~/.openui/claude-code-plugin/hooks/
 **Real groups.** Drop an agent into a category and it moves with the category. Positions are stored absolute on disk with the group as an annotation, so nothing can ever be displaced by a lost link.
 
 **At-a-glance load.** Every card shows a **Context** bar (read from the transcript: exactly what `/compact` acts on) and a subagent badge. The panel has a tab strip for a session's subagents with a read-only, live-updating view of each one's transcript.
+
+**One canvas, any directory.** State is global (`~/.openui/workspaces/`), not per launch directory; `--workspace` for separate canvases.
 
 **Quality of life.** Resizable panel with the canvas buttons sliding out of its way; optional initial prompt when spawning; the open session in the URL (`#/session/<id>`); pan/zoom and layout persisted; collapsible details footer; `OPENUI_DEBUG=1` for verbose logs (raw hook payloads are no longer logged by default, nor written to `/tmp`).
 

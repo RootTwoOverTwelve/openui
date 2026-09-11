@@ -1,12 +1,34 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, cpSync } from "fs";
 import { join } from "path";
+import { homedir } from "os";
 import type { PersistedState, PersistedNode, Session } from "../types";
 import { debug } from "./log";
 
-// Use local .openui folder where user ran openui from
+// One canvas regardless of where openui is launched from: the workspace
+// lives under ~/.openui/workspaces/<name> (default "default"). The launch
+// directory is only the default cwd for new agents. OPENUI_DATA_DIR
+// overrides the location outright.
 const LAUNCH_CWD = process.env.LAUNCH_CWD || process.cwd();
-const DATA_DIR = join(LAUNCH_CWD, ".openui");
+export const WORKSPACE = process.env.OPENUI_WORKSPACE || "default";
+const DATA_DIR =
+  process.env.OPENUI_DATA_DIR || join(homedir(), ".openui", "workspaces", WORKSPACE);
 const STATE_FILE = join(DATA_DIR, "state.json");
+
+// Earlier versions kept state in <launch dir>/.openui. Bring it across the
+// first time the global workspace is empty; the original is left in place.
+export function importLegacyState(): string | null {
+  const legacyDir = join(LAUNCH_CWD, ".openui");
+  if (legacyDir === DATA_DIR) return null;
+  if (existsSync(STATE_FILE) || !existsSync(join(legacyDir, "state.json"))) return null;
+  ensureDirs();
+  for (const entry of ["state.json", "config.json", ".env", "buffers", "prompts"]) {
+    const src = join(legacyDir, entry);
+    if (existsSync(src)) {
+      try { cpSync(src, join(DATA_DIR, entry), { recursive: true }); } catch (e) { console.error(`Failed to import ${entry}:`, e); }
+    }
+  }
+  return legacyDir;
+}
 const BUFFERS_DIR = join(DATA_DIR, "buffers");
 const PROMPTS_DIR = join(DATA_DIR, "prompts");
 

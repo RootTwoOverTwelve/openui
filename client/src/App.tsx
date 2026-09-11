@@ -22,9 +22,9 @@ import { ForkModal } from "./components/ForkModal";
 const GRID_SIZE = 24;
 const snap = (v: number) => Math.round(v / GRID_SIZE) * GRID_SIZE;
 
-// Pan/zoom is a per-browser preference, keyed by project so two OpenUI
-// instances on the same origin don't share one
-const viewportKey = (cwd: string | null | undefined) => `openui-viewport:${cwd || "default"}`;
+// Pan/zoom is a per-browser preference, keyed by workspace so two canvases
+// on the same origin don't share one
+const viewportKey = (workspace: string | null | undefined) => `openui-viewport:${workspace || "default"}`;
 
 function loadViewport(cwd: string | null | undefined): Viewport | null {
   try {
@@ -109,8 +109,9 @@ function AppContent() {
     nodes: storeNodes,
     setNodes: setStoreNodes,
     setAgents,
-    launchCwd,
     setLaunchCwd,
+    workspace,
+    setWorkspace,
     setSelectedNodeId,
     setSidebarOpen,
     addSession,
@@ -137,20 +138,20 @@ function AppContent() {
   const [savedViewport, setSavedViewport] = useState<Viewport | null | undefined>(undefined);
   useEffect(() => {
     if (savedViewport !== undefined) return;
-    if (launchCwd) {
-      setSavedViewport(loadViewport(launchCwd));
+    if (workspace) {
+      setSavedViewport(loadViewport(workspace));
       return;
     }
     // Config never answered: don't hold the canvas hostage
     const fallback = setTimeout(() => setSavedViewport(loadViewport(null)), 3000);
     return () => clearTimeout(fallback);
-  }, [launchCwd, savedViewport]);
+  }, [workspace, savedViewport]);
 
   const onMoveEnd = useCallback((_: unknown, viewport: Viewport) => {
     try {
-      localStorage.setItem(viewportKey(launchCwd), JSON.stringify(viewport));
+      localStorage.setItem(viewportKey(workspace), JSON.stringify(viewport));
     } catch {}
-  }, [launchCwd]);
+  }, [workspace]);
 
   // Sync nodes with store
   useEffect(() => {
@@ -167,7 +168,10 @@ function AppContent() {
   useEffect(() => {
     fetch("/api/config")
       .then((res) => res.json())
-      .then((config) => setLaunchCwd(config.launchCwd))
+      .then((config) => {
+        setLaunchCwd(config.launchCwd);
+        setWorkspace(config.workspace || "default");
+      })
       .catch(console.error);
 
     fetch("/api/agents")

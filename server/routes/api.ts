@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
 import { sessions, createSession, deleteSession, buildLaunch, resumeFlags, getUserShell, findClaudeSession, reviveSession, typeAndSubmit } from "../services/sessionManager";
-import { loadState, saveState, savePositions, writeState, sessionToNode, getDataDir, type NodePlacement } from "../services/persistence";
+import { loadState, saveState, savePositions, writeState, sessionToNode, getDataDir, WORKSPACE, type NodePlacement } from "../services/persistence";
 import { debug } from "../services/log";
 import { readContextUsage } from "../services/context";
 import { listSubagents, readSubagentTranscript, subagentCounts } from "../services/subagents";
@@ -24,7 +24,7 @@ const logError = QUIET ? () => {} : console.error.bind(console);
 export const apiRoutes = new Hono();
 
 apiRoutes.get("/config", (c) => {
-  return c.json({ launchCwd: LAUNCH_CWD, dataDir: getDataDir() });
+  return c.json({ launchCwd: LAUNCH_CWD, dataDir: getDataDir(), workspace: WORKSPACE });
 });
 
 // Browse directories for file picker
@@ -704,10 +704,7 @@ apiRoutes.post("/categories", async (c) => {
   if (!state.categories) state.categories = [];
   state.categories.push(category);
 
-  const { writeFileSync } = require("fs");
-  const { join } = require("path");
-  const DATA_DIR = join(process.env.LAUNCH_CWD || process.cwd(), ".openui");
-  writeFileSync(join(DATA_DIR, "state.json"), JSON.stringify(state, null, 2));
+  writeState(state);
 
   return c.json({ success: true });
 });
@@ -724,10 +721,7 @@ apiRoutes.patch("/categories/:categoryId", async (c) => {
 
   Object.assign(category, updates);
 
-  const { writeFileSync } = require("fs");
-  const { join } = require("path");
-  const DATA_DIR = join(process.env.LAUNCH_CWD || process.cwd(), ".openui");
-  writeFileSync(join(DATA_DIR, "state.json"), JSON.stringify(state, null, 2));
+  writeState(state);
 
   return c.json({ success: true });
 });
@@ -752,10 +746,7 @@ apiRoutes.delete("/categories/:categoryId", (c) => {
 
   state.categories.splice(index, 1);
 
-  const { writeFileSync } = require("fs");
-  const { join } = require("path");
-  const DATA_DIR = join(process.env.LAUNCH_CWD || process.cwd(), ".openui");
-  writeFileSync(join(DATA_DIR, "state.json"), JSON.stringify(state, null, 2));
+  writeState(state);
 
   return c.json({ success: true });
 });

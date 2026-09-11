@@ -2,10 +2,10 @@ import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { LinearTicket, LinearConfig } from "../types";
 import { debug } from "./log";
+import { getDataDir } from "./persistence";
 
-const LAUNCH_CWD = process.env.LAUNCH_CWD || process.cwd();
-const CONFIG_FILE = join(LAUNCH_CWD, ".openui", "config.json");
-const ENV_FILE = join(LAUNCH_CWD, ".openui", ".env");
+const CONFIG_FILE = join(getDataDir(), "config.json");
+const ENV_FILE = join(getDataDir(), ".env");
 
 // Load .env file from .openui directory
 function loadEnvFile(): Record<string, string> {
@@ -39,7 +39,7 @@ function loadEnvFile(): Record<string, string> {
 // Save API key to .env file
 function saveEnvFile(apiKey: string): void {
   try {
-    const dir = join(LAUNCH_CWD, ".openui");
+    const dir = getDataDir();
     if (!existsSync(dir)) {
       require("fs").mkdirSync(dir, { recursive: true });
     }
@@ -101,7 +101,7 @@ export function saveConfig(config: LinearConfig): void {
 
   // Save other settings to config.json (without the API key)
   try {
-    const dir = join(LAUNCH_CWD, ".openui");
+    const dir = getDataDir();
     if (!existsSync(dir)) {
       require("fs").mkdirSync(dir, { recursive: true });
     }

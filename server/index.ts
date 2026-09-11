@@ -3,7 +3,7 @@ import { serveStatic } from "hono/bun";
 import type { ServerWebSocket } from "bun";
 import { apiRoutes } from "./routes/api";
 import { sessions, restoreSessions } from "./services/sessionManager";
-import { saveState } from "./services/persistence";
+import { saveState, importLegacyState, getDataDir, WORKSPACE } from "./services/persistence";
 import type { WebSocketData } from "./types";
 
 const app = new Hono();
@@ -133,10 +133,13 @@ Bun.serve<WebSocketData>({
 });
 
 // Restore sessions on startup
+const imported = importLegacyState();
+if (imported) log(`\x1b[38;5;141m[persistence]\x1b[0m Imported existing state from ${imported} into workspace "${WORKSPACE}" (original left in place)`);
 restoreSessions();
 
 log(`\x1b[38;5;141m[server]\x1b[0m Running on http://localhost:${PORT}`);
 log(`\x1b[38;5;245m[server]\x1b[0m Launch directory: ${process.env.LAUNCH_CWD || process.cwd()}`);
+log(`\x1b[38;5;245m[server]\x1b[0m Workspace "${WORKSPACE}": ${getDataDir()}`);
 
 // Periodic state save
 setInterval(() => {
