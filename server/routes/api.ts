@@ -5,6 +5,7 @@ import { loadState, saveState, savePositions, writeState, sessionToNode, getData
 import { debug } from "../services/log";
 import { readContextUsage } from "../services/context";
 import { listSubagents, readSubagentTranscript, subagentCounts } from "../services/subagents";
+import { listLibrary, readLibraryFile, referenceMessage, libraryDir } from "../services/library";
 import {
   loadConfig,
   saveConfig,
@@ -110,6 +111,31 @@ apiRoutes.get("/sessions/:sessionId/subagents/:agentId", (c) => {
   const messages = readSubagentTranscript(session.transcriptPath, c.req.param("agentId"));
   if (!messages) return c.json({ error: "Subagent not found" }, 404);
   return c.json({ messages });
+});
+
+// ============ Library (reference notes in <repo>/library) ============
+
+apiRoutes.get("/library", (c) => {
+  return c.json({ dir: libraryDir(), entries: listLibrary() });
+});
+
+apiRoutes.get("/library/:file", (c) => {
+  const found = readLibraryFile(c.req.param("file"));
+  if (!found) return c.json({ error: "Not found" }, 404);
+  return c.json(found);
+});
+
+// Tell a running agent about a note. It reads/copies the file itself.
+apiRoutes.post("/sessions/:sessionId/library", async (c) => {
+  const session = sessions.get(c.req.param("sessionId"));
+  if (!session) return c.json({ error: "Session not found" }, 404);
+  if (!session.pty) return c.json({ error: "Session is not running" }, 400);
+  const { file, mode } = await c.req.json();
+  const found = readLibraryFile(String(file || ""));
+  if (!found) return c.json({ error: "Note not found" }, 404);
+  const message = referenceMessage(found.entry, mode === "read" ? "read" : "point");
+  typeAndSubmit(session.pty, message);
+  return c.json({ success: true, message });
 });
 
 // Look up one Claude Code session by ID (for attaching an existing session)

@@ -106,6 +106,10 @@ interface AppState {
   setArchiveModalOpen: (open: boolean) => void;
   forkForNodeId: string | null;
   setForkForNodeId: (id: string | null) => void;
+  libraryOpen: boolean;
+  libraryTargetNodeId: string | null;
+  openLibrary: (targetNodeId?: string | null) => void;
+  closeLibrary: () => void;
   addAgentModalOpen: boolean;
   setAddAgentModalOpen: (open: boolean) => void;
   newSessionModalOpen: boolean;
@@ -187,6 +191,10 @@ export const useStore = create<AppState>((set) => ({
   setArchiveModalOpen: (open) => set({ archiveModalOpen: open }),
   forkForNodeId: null,
   setForkForNodeId: (id) => set({ forkForNodeId: id }),
+  libraryOpen: false,
+  libraryTargetNodeId: null,
+  openLibrary: (targetNodeId = null) => set({ libraryOpen: true, libraryTargetNodeId: targetNodeId }),
+  closeLibrary: () => set({ libraryOpen: false, libraryTargetNodeId: null }),
   addAgentModalOpen: false,
   setAddAgentModalOpen: (open) => set({ addAgentModalOpen: open }),
   newSessionModalOpen: false,

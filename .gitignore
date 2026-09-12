@@ -34,3 +34,7 @@ yarn-error.log*
 # Temp
 *.tmp
 .cache/
+
+# Agent reference library: keep the folder and its README, not the notes
+library/*
+!library/README.md

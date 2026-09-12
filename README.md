@@ -63,6 +63,8 @@ cp claude-code-plugin/hooks/* ~/.openui/claude-code-plugin/hooks/
 
 **One canvas, any directory.** State is global (`~/.openui/workspaces/`), not per launch directory; `--workspace` for separate canvases.
 
+**Library.** Drop reference notes (a cluster runbook, lab conventions) as Markdown into `library/` — only its README is tracked. The header's book icon renders them; the panel's book icon points *that* agent at one: it gets the path and the section outline, not the contents, and copies or greps the file itself, so a long runbook never lands in its context unless you choose **Read in full**.
+
 **Quality of life.** Resizable panel with the canvas buttons sliding out of its way; optional initial prompt when spawning; the open session in the URL (`#/session/<id>`); pan/zoom and layout persisted; collapsible details footer; `OPENUI_DEBUG=1` for verbose logs (raw hook payloads are no longer logged by default, nor written to `/tmp`).
 
 ## Development

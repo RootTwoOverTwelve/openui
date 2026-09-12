@@ -14,6 +14,7 @@ import {
   GitFork,
   ChevronDown,
   ChevronUp,
+  BookOpen,
   Sparkles,
   Code,
   Cpu,
@@ -83,6 +84,7 @@ export function Sidebar() {
     setSidebarWidth,
     sidebarResizing: isResizing,
     setSidebarResizing: setIsResizing,
+    openLibrary,
   } = useStore();
 
   const session = selectedNodeId ? sessions.get(selectedNodeId) : null;
@@ -324,6 +326,13 @@ export function Sidebar() {
               </div>
               
               <div className="flex items-center gap-1 flex-shrink-0">
+                <button
+                  onClick={() => openLibrary(selectedNodeId)}
+                  title="Library — point this agent at a reference note"
+                  className="w-7 h-7 rounded flex items-center justify-center text-zinc-500 hover:text-white hover:bg-surface-active transition-colors"
+                >
+                  <BookOpen className="w-4 h-4" />
+                </button>
                 {!isDisconnected && (
                   <button
                     onClick={handleNewSession}

@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
-import { Plus, Folder, Settings, Archive } from "lucide-react";
+import { Plus, Folder, Settings, Archive, BookOpen } from "lucide-react";
 import { motion } from "framer-motion";
 import { useStore } from "../stores/useStore";
 import { SettingsModal } from "./SettingsModal";
 import { ArchiveModal } from "./ArchiveModal";
+import { LibraryModal } from "./LibraryModal";
 
 export function Header() {
-  const { setAddAgentModalOpen, sessions, launchCwd, workspace, archivedCount, refreshArchivedCount, archiveModalOpen, setArchiveModalOpen } = useStore();
+  const { setAddAgentModalOpen, sessions, launchCwd, workspace, archivedCount, refreshArchivedCount, archiveModalOpen, setArchiveModalOpen, openLibrary } = useStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
@@ -46,6 +47,13 @@ export function Header() {
       {/* Right side buttons */}
       <div className="flex items-center gap-2">
         <button
+          onClick={() => openLibrary()}
+          className="p-2 rounded-md text-zinc-400 hover:text-white hover:bg-surface-active transition-colors"
+          title="Library — reference notes for agents"
+        >
+          <BookOpen className="w-4 h-4" />
+        </button>
+        <button
           onClick={() => setArchiveModalOpen(true)}
           className="relative p-2 rounded-md text-zinc-400 hover:text-white hover:bg-surface-active transition-colors"
           title="Archived sessions"
@@ -77,6 +85,7 @@ export function Header() {
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <ArchiveModal open={archiveModalOpen} onClose={() => setArchiveModalOpen(false)} />
+      <LibraryModal />
     </header>
   );
 }
