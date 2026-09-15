@@ -1,11 +1,13 @@
 import { motion } from "framer-motion";
 import { Plus, FolderPlus } from "lucide-react";
+import { useReactFlow } from "@xyflow/react";
 import { useStore } from "../stores/useStore";
 
 const CATEGORY_COLORS = ["#F97316", "#22C55E", "#3B82F6", "#8B5CF6", "#EC4899", "#14B8A6"];
 
 export function CanvasControls() {
-  const { setAddAgentModalOpen, nodes, addNode, sidebarOpen, sidebarWidth, sidebarResizing } = useStore();
+  const { setAddAgentModalOpen, addNode, sidebarOpen, sidebarWidth, sidebarResizing } = useStore();
+  const reactFlowInstance = useReactFlow();
 
   const handleAddAgent = () => {
     setAddAgentModalOpen(true);
@@ -15,11 +17,15 @@ export function CanvasControls() {
     const id = `category-${Date.now()}`;
     const color = CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)];
 
-    // Find a good position (offset from existing nodes)
-    const categoryCount = nodes.filter(n => n.type === "category").length;
+    // Centre it in the current view, wherever the user has panned to
+    const viewport = reactFlowInstance.getViewport();
+    const bounds = document.querySelector(".react-flow")?.getBoundingClientRect();
+    const viewW = bounds?.width || window.innerWidth;
+    const viewH = bounds?.height || window.innerHeight;
+    const GRID = 24;
     const position = {
-      x: 50 + (categoryCount % 3) * 300,
-      y: 50 + Math.floor(categoryCount / 3) * 250,
+      x: Math.round(((-viewport.x + viewW / 2) / viewport.zoom - 456 / 2) / GRID) * GRID,
+      y: Math.round(((-viewport.y + viewH / 2) / viewport.zoom - 312 / 2) / GRID) * GRID,
     };
 
     const category = {
