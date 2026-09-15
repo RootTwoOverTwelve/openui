@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useReactFlow } from "@xyflow/react";
 import { X, Archive, RotateCcw, Trash2, Folder } from "lucide-react";
 import { useStore } from "../stores/useStore";
-import { findFreePosition } from "./NewSessionModal";
+import { AGENT_SIZE, findFreeSpot, toNodePlacement, visibleCenter } from "../lib/placement";
 
 interface ArchivedSession {
   nodeId: string;
@@ -27,7 +27,7 @@ interface ArchiveModalProps {
 }
 
 export function ArchiveModal({ open, onClose }: ArchiveModalProps) {
-  const { agents, nodes, addNode, addSession, refreshArchivedCount, setSelectedNodeId, setSidebarOpen } = useStore();
+  const { agents, nodes, addNode, addSession, refreshArchivedCount, setSelectedNodeId, setSidebarOpen, sidebarOpen, sidebarWidth } = useStore();
   const reactFlowInstance = useReactFlow();
   const [items, setItems] = useState<ArchivedSession[]>([]);
   const [loading, setLoading] = useState(false);
@@ -55,11 +55,8 @@ export function ArchiveModal({ open, onClose }: ArchiveModalProps) {
   const handleRestore = async (item: ArchivedSession) => {
     setBusyId(item.sessionId);
     try {
-      const viewport = reactFlowInstance.getViewport();
-      const bounds = document.querySelector(".react-flow")?.getBoundingClientRect();
-      const centerX = (-viewport.x + (bounds?.width || window.innerWidth) / 2) / viewport.zoom;
-      const centerY = (-viewport.y + (bounds?.height || window.innerHeight) / 2) / viewport.zoom;
-      const [position] = findFreePosition(centerX, centerY, nodes, 1);
+      const center = visibleCenter(reactFlowInstance.getViewport(), sidebarOpen ? sidebarWidth : 0);
+      const position = findFreeSpot(nodes, AGENT_SIZE, center);
 
       const res = await fetch(`/api/sessions/archived/${item.sessionId}/restore`, {
         method: "POST",
@@ -95,7 +92,7 @@ export function ArchiveModal({ open, onClose }: ArchiveModalProps) {
       addNode({
         id: session.nodeId,
         type: "agent",
-        position: session.position || position,
+        ...toNodePlacement(session.position || position, AGENT_SIZE, nodes),
         data: {
           label: session.customName || session.agentName,
           agentId: session.agentId,

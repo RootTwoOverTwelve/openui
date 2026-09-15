@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { useReactFlow } from "@xyflow/react";
 import { useStore, Agent, AgentSession } from "../stores/useStore";
+import { AGENT_SIZE, findFreeSpot, toNodePlacement, visibleCenter } from "../lib/placement";
 
 const iconMap: Record<string, any> = {
   sparkles: Sparkles,
@@ -64,80 +65,6 @@ interface NewSessionModalProps {
 
 type TabType = "blank" | "linear" | "github";
 
-// Node dimensions for collision detection
-const NODE_WIDTH = 200;
-const NODE_HEIGHT = 120;
-const SPACING = 24; // Grid snap size
-
-// Find a free position near the target that doesn't overlap existing nodes
-export function findFreePosition(
-  targetX: number,
-  targetY: number,
-  existingNodes: { position?: { x: number; y: number } }[],
-  count: number = 1
-): { x: number; y: number }[] {
-  const positions: { x: number; y: number }[] = [];
-  const GRID = SPACING;
-
-  // Snap target to grid
-  const startX = Math.round(targetX / GRID) * GRID;
-  const startY = Math.round(targetY / GRID) * GRID;
-
-  // Filter to only nodes with valid positions
-  const validNodes = existingNodes.filter(
-    (n): n is { position: { x: number; y: number } } =>
-      n.position !== undefined &&
-      typeof n.position.x === 'number' &&
-      typeof n.position.y === 'number'
-  );
-
-  // Check if a position overlaps with any existing node or already-placed new node
-  const isOverlapping = (x: number, y: number, placedPositions: { x: number; y: number }[]) => {
-    const allPositions = [...validNodes.map(n => n.position), ...placedPositions];
-    for (const pos of allPositions) {
-      const overlapX = Math.abs(x - pos.x) < NODE_WIDTH + SPACING;
-      const overlapY = Math.abs(y - pos.y) < NODE_HEIGHT + SPACING;
-      if (overlapX && overlapY) return true;
-    }
-    return false;
-  };
-
-  // Spiral outward from target position to find free spots
-  for (let i = 0; i < count; i++) {
-    let found = false;
-    let radius = 0;
-    const maxRadius = 20; // Max search radius in grid units
-
-    while (!found && radius <= maxRadius) {
-      // Try positions in a spiral pattern
-      for (let dx = -radius; dx <= radius && !found; dx++) {
-        for (let dy = -radius; dy <= radius && !found; dy++) {
-          // Only check positions on the current ring
-          if (Math.abs(dx) !== radius && Math.abs(dy) !== radius) continue;
-
-          const x = startX + dx * (NODE_WIDTH + SPACING);
-          const y = startY + dy * (NODE_HEIGHT + SPACING);
-
-          if (!isOverlapping(x, y, positions)) {
-            positions.push({ x, y });
-            found = true;
-          }
-        }
-      }
-      radius++;
-    }
-
-    // Fallback if no free position found
-    if (!found) {
-      positions.push({
-        x: startX + i * (NODE_WIDTH + SPACING),
-        y: startY,
-      });
-    }
-  }
-
-  return positions;
-}
 
 export function NewSessionModal({
   open,
@@ -154,6 +81,8 @@ export function NewSessionModal({
     launchCwd,
     setSelectedNodeId,
     setSidebarOpen,
+    sidebarOpen,
+    sidebarWidth,
   } = useStore();
 
   // Get ReactFlow instance to access viewport
@@ -499,19 +428,15 @@ export function NewSessionModal({
           });
         }
       } else {
-        // Creating new agent(s)
-        // Get the center of the current viewport
-        const viewport = reactFlowInstance.getViewport();
-        const viewportBounds = document.querySelector('.react-flow')?.getBoundingClientRect();
-        const viewportWidth = viewportBounds?.width || window.innerWidth;
-        const viewportHeight = viewportBounds?.height || window.innerHeight;
-
-        // Convert viewport center to flow coordinates
-        const centerX = (-viewport.x + viewportWidth / 2) / viewport.zoom;
-        const centerY = (-viewport.y + viewportHeight / 2) / viewport.zoom;
-
-        // Find free positions near viewport center for all new agents
-        const freePositions = findFreePosition(centerX, centerY, nodes, count);
+        // Creating new agent(s): fill free spots around the middle of the
+        // visible canvas, each avoiding the ones placed before it
+        const center = visibleCenter(reactFlowInstance.getViewport(), sidebarOpen ? sidebarWidth : 0);
+        const placed: { x: number; y: number; width: number; height: number }[] = [];
+        const freePositions = Array.from({ length: count }, () => {
+          const spot = findFreeSpot(nodes, AGENT_SIZE, center, { avoid: placed });
+          placed.push({ ...spot, ...AGENT_SIZE });
+          return spot;
+        });
 
         for (let i = 0; i < count; i++) {
           const nodeId = `node-${Date.now()}-${i}`;
@@ -563,12 +488,12 @@ export function NewSessionModal({
           }
           const { sessionId, gitBranch, cwd: newCwd } = await res.json();
 
-          const { x, y } = freePositions[i];
+          const placement = toNodePlacement(freePositions[i], AGENT_SIZE, nodes);
 
           addNode({
             id: nodeId,
             type: "agent",
-            position: { x, y },
+            ...placement,
             data: {
               label: agentName,
               agentId: selectedAgent.id,

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, GitFork, MessageSquareText, Wrench, AlertTriangle } from "lucide-react";
 import { useStore } from "../stores/useStore";
+import { AGENT_SIZE, placeBeside, toNodePlacement } from "../lib/placement";
 
 type ForkKind = "consult" | "develop";
 
@@ -15,8 +16,6 @@ function briefingFor(kind: ForkKind, parentName: string, cwd: string): string {
   }
   return `You are a development fork of the session "${parentName}". The original agent may still be actively working in this same directory and worktree (${cwd}). Before you change anything, think through what could go wrong with two agents editing one tree — clobbered files, conflicting git operations, half-applied refactors, stale assumptions about files the other agent is changing — and how to avoid it: prefer a separate branch or worktree when appropriate, keep changes narrowly scoped, re-read files before editing, never run destructive git commands, and tell the user before doing anything that could interfere with the original agent. Any "[OpenUI] … fork of this session …" notice in your inherited history was addressed to the original agent, not to you.`;
 }
-
-const NODE_WIDTH = 400;
 
 export function ForkModal() {
   const {
@@ -119,15 +118,13 @@ export function ForkModal() {
         forkKind: kind,
       });
 
-      // Beside the parent, in the same category if it has one
-      const position = parentNode
-        ? { x: parentNode.position.x + NODE_WIDTH + 24, y: parentNode.position.y }
-        : { x: 100, y: 100 };
+      // Beside the parent (right, below, left, above — first free side);
+      // joins the parent's category if it lands inside it
+      const spot = parentNode ? placeBeside(parentNode, nodes, AGENT_SIZE) : { x: 100, y: 100 };
       addNode({
         id: nodeId,
         type: "agent",
-        position,
-        ...(parentNode?.parentId && { parentId: parentNode.parentId }),
+        ...toNodePlacement(spot, AGENT_SIZE, nodes),
         data: {
           label: name.trim() || parent.agentName,
           agentId: parent.agentId,

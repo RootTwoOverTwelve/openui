@@ -18,6 +18,7 @@ import { AgentNode } from "./components/AgentNode/index";
 import { CategoryNode } from "./components/CategoryNode";
 import { Sidebar } from "./components/Sidebar";
 import { ForkModal } from "./components/ForkModal";
+import { AGENT_SIZE, CATEGORY_SIZE, nodeSize } from "./lib/placement";
 
 const GRID_SIZE = 24;
 const snap = (v: number) => Math.round(v / GRID_SIZE) * GRID_SIZE;
@@ -34,12 +35,6 @@ function loadViewport(cwd: string | null | undefined): Viewport | null {
     if (typeof v?.x === "number" && typeof v?.y === "number" && typeof v?.zoom === "number") return v;
   } catch {}
   return null;
-}
-
-function nodeSize(node: any, fallbackW: number, fallbackH: number) {
-  const width = node.measured?.width || node.width || (typeof node.style?.width === "number" ? node.style.width : parseInt(node.style?.width) || fallbackW);
-  const height = node.measured?.height || node.height || (typeof node.style?.height === "number" ? node.style.height : parseInt(node.style?.height) || fallbackH);
-  return { width, height };
 }
 
 // Agents are parented to the category their centre lands in. On the canvas
@@ -60,12 +55,12 @@ function assignParents(nodes: any[], movedIds: Set<string>): any[] | null {
     const abs = parent
       ? { x: parent.position.x + node.position.x, y: parent.position.y + node.position.y }
       : node.position;
-    const { width, height } = nodeSize(node, 380, 240);
+    const { width, height } = nodeSize(node, AGENT_SIZE);
     const cx = abs.x + width / 2;
     const cy = abs.y + height / 2;
 
     const target = categories.find((cat) => {
-      const size = nodeSize(cat, 250, 200);
+      const size = nodeSize(cat, CATEGORY_SIZE);
       return cx >= cat.position.x && cx <= cat.position.x + size.width &&
              cy >= cat.position.y && cy <= cat.position.y + size.height;
     });

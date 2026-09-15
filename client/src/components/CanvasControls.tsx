@@ -2,11 +2,12 @@ import { motion } from "framer-motion";
 import { Plus, FolderPlus } from "lucide-react";
 import { useReactFlow } from "@xyflow/react";
 import { useStore } from "../stores/useStore";
+import { CATEGORY_SIZE, findFreeSpot, visibleCenter } from "../lib/placement";
 
 const CATEGORY_COLORS = ["#F97316", "#22C55E", "#3B82F6", "#8B5CF6", "#EC4899", "#14B8A6"];
 
 export function CanvasControls() {
-  const { setAddAgentModalOpen, addNode, sidebarOpen, sidebarWidth, sidebarResizing } = useStore();
+  const { setAddAgentModalOpen, addNode, nodes, sidebarOpen, sidebarWidth, sidebarResizing } = useStore();
   const reactFlowInstance = useReactFlow();
 
   const handleAddAgent = () => {
@@ -17,24 +18,18 @@ export function CanvasControls() {
     const id = `category-${Date.now()}`;
     const color = CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)];
 
-    // Centre it in the current view, wherever the user has panned to
-    const viewport = reactFlowInstance.getViewport();
-    const bounds = document.querySelector(".react-flow")?.getBoundingClientRect();
-    const viewW = bounds?.width || window.innerWidth;
-    const viewH = bounds?.height || window.innerHeight;
-    const GRID = 24;
-    const position = {
-      x: Math.round(((-viewport.x + viewW / 2) / viewport.zoom - 456 / 2) / GRID) * GRID,
-      y: Math.round(((-viewport.y + viewH / 2) / viewport.zoom - 312 / 2) / GRID) * GRID,
-    };
+    // Free spot around the middle of the visible canvas, clear of cards and
+    // other categories
+    const center = visibleCenter(reactFlowInstance.getViewport(), sidebarOpen ? sidebarWidth : 0);
+    const position = findFreeSpot(nodes, CATEGORY_SIZE, center, { avoidCategories: true });
 
     const category = {
       id,
       label: "New Category",
       color,
       position,
-      width: 456,
-      height: 312,
+      width: CATEGORY_SIZE.width,
+      height: CATEGORY_SIZE.height,
     };
 
     // Save to server
@@ -49,7 +44,7 @@ export function CanvasControls() {
       id,
       type: "category",
       position,
-      style: { width: 456, height: 312 },
+      style: { width: CATEGORY_SIZE.width, height: CATEGORY_SIZE.height },
       data: {
         label: "New Category",
         color,
