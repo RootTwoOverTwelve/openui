@@ -7,6 +7,7 @@ import type { Session, PersistedNode, ForkOrigin, ForkKind } from "../types";
 import { loadBuffer, writePromptFile, removePromptFile } from "./persistence";
 import { debug } from "./log";
 import { readContextUsage } from "./context";
+import { trackModes } from "./termModes";
 
 const QUIET = !!process.env.OPENUI_QUIET;
 const log = QUIET ? () => {} : console.log.bind(console);
@@ -416,6 +417,7 @@ export function createSession(params: {
     ticketUrl,
     initialPrompt: initialPrompt?.trim() || undefined,
     systemPrompt: systemPrompt?.trim() || undefined,
+    termModes: new Set<number>(),
     claudeSessionId: resumeClaudeSessionId || undefined,
     forkedFrom,
     forkKind,
@@ -434,6 +436,7 @@ export function createSession(params: {
 
   // PTY output handler
   ptyProcess.onData((data: string) => {
+    trackModes(session.termModes!, data);
     session.outputBuffer.push(data);
     if (session.outputBuffer.length > MAX_BUFFER_SIZE) {
       session.outputBuffer.shift();
@@ -528,6 +531,7 @@ export function reviveSession(node: PersistedNode): Session {
     transcriptPath: node.transcriptPath,
     model: node.model,
     contextUsage: node.transcriptPath ? readContextUsage(node.transcriptPath, node.model) || undefined : undefined,
+    termModes: new Set<number>(),
   };
   sessions.set(node.sessionId, session);
   return session;
@@ -574,6 +578,7 @@ export function restoreSessions() {
       transcriptPath: node.transcriptPath,
       model: node.model,
       contextUsage: node.transcriptPath ? readContextUsage(node.transcriptPath, node.model) || undefined : undefined,
+      termModes: new Set<number>(),
     };
 
     sessions.set(node.sessionId, session);

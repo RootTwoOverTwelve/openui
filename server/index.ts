@@ -4,6 +4,7 @@ import type { ServerWebSocket } from "bun";
 import { apiRoutes } from "./routes/api";
 import { sessions, restoreSessions } from "./services/sessionManager";
 import { saveState, importLegacyState, getDataDir, WORKSPACE } from "./services/persistence";
+import { modeSequence } from "./services/termModes";
 import type { WebSocketData } from "./types";
 
 const app = new Hono();
@@ -79,11 +80,13 @@ Bun.serve<WebSocketData>({
       log(`\x1b[38;5;245m[ws]\x1b[0m Connected to ${sessionId}`);
       session.clients.add(ws);
 
-      if (session.outputBuffer.length > 0 && !session.isRestored && session.pty) {
-        const history = session.outputBuffer.join("");
-        // Flagged so the client can swallow xterm's automatic replies
-        // (cursor-position reports etc.) instead of typing them into the PTY
-        ws.send(JSON.stringify({ type: "output", data: history, history: true }));
+      if (session.pty && !session.isRestored) {
+        // Bring this terminal up to the modes the agent has already set (most
+        // importantly bracketed paste), then replay the scrollback. Flagged so
+        // the client swallows xterm's automatic replies (cursor-position
+        // reports etc.) instead of typing them into the PTY.
+        const data = modeSequence(session.termModes) + session.outputBuffer.join("");
+        if (data) ws.send(JSON.stringify({ type: "output", data, history: true }));
       } else if (session.isRestored || !session.pty) {
         ws.send(JSON.stringify({
           type: "output",

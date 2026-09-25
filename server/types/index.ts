@@ -50,6 +50,9 @@ export interface Session {
   model?: string;
   contextUsage?: ContextUsage;
   lastContextReadAt?: number;
+  // Terminal private modes the agent has enabled, replayed to terminals that
+  // attach later (in-memory only)
+  termModes?: Set<number>;
   // Heads-up for the parent, held until this fork has booted (in-memory only)
   pendingParentNotice?: { parentSessionId: string; text: string; expiry: ReturnType<typeof setTimeout> };
   // Current tool being used (from plugin)

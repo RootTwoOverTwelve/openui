@@ -4,6 +4,7 @@ import { sessions, createSession, deleteSession, buildLaunch, resumeFlags, getUs
 import { loadState, saveState, savePositions, writeState, sessionToNode, getDataDir, WORKSPACE, type NodePlacement } from "../services/persistence";
 import { debug } from "../services/log";
 import { readContextUsage } from "../services/context";
+import { trackModes } from "../services/termModes";
 import { listSubagents, readSubagentTranscript, subagentCounts } from "../services/subagents";
 import { listLibrary, readLibraryFile, referenceMessage, libraryDir } from "../services/library";
 import {
@@ -381,6 +382,7 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
   // that would be replayed into the new shell. A resumed Claude session
   // re-renders its own conversation history anyway.
   session.outputBuffer = [];
+  session.termModes = new Set<number>();
 
   const resetInterval = setInterval(() => {
     if (!sessions.has(sessionId) || !session.pty) {
@@ -391,6 +393,7 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
   }, 500);
 
   ptyProcess.onData((data: string) => {
+    trackModes(session.termModes!, data);
     session.outputBuffer.push(data);
     if (session.outputBuffer.length > 1000) {
       session.outputBuffer.shift();
