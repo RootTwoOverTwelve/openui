@@ -93,6 +93,28 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
     // queries in that stream synchronously via onData, and those answers
     // must not reach the PTY
     let replayingHistory = false;
+    let repaintTimer: ReturnType<typeof setTimeout> | null = null;
+    let repainted = false;
+
+    // Replayed scrollback is only whatever survived the buffer cap, so it may
+    // not contain a whole frame — and a TUI won't redraw on its own while it
+    // is idle. A same-size resize is ignored, so briefly change the size to
+    // make the agent repaint over whatever we just painted.
+    const requestRepaint = () => {
+      if (repainted) return;
+      repainted = true;
+      if (repaintTimer) { clearTimeout(repaintTimer); repaintTimer = null; }
+      const term = xtermRef.current;
+      if (!term || ws?.readyState !== WebSocket.OPEN) return;
+      const { cols, rows } = term;
+      if (rows < 2) return;
+      ws.send(JSON.stringify({ type: "resize", cols, rows: rows - 1 }));
+      setTimeout(() => {
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "resize", cols, rows }));
+        }
+      }, 60);
+    };
 
     const connectWs = () => {
       if (!mountedRef.current) return;
@@ -104,6 +126,8 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
         if (xtermRef.current) {
           ws?.send(JSON.stringify({ type: "resize", cols: xtermRef.current.cols, rows: xtermRef.current.rows }));
         }
+        // Fallback for a session with no scrollback to replay
+        repaintTimer = setTimeout(requestRepaint, 400);
       };
 
       ws.onmessage = (event) => {
@@ -118,7 +142,10 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
             }
             if (msg.history) {
               replayingHistory = true;
-              term.write(msg.data, () => { replayingHistory = false; });
+              term.write(msg.data, () => {
+                replayingHistory = false;
+                requestRepaint();
+              });
             } else {
               term.write(msg.data);
             }
@@ -174,6 +201,7 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
     return () => {
       mountedRef.current = false;
       clearTimeout(connectTimeout);
+      if (repaintTimer) clearTimeout(repaintTimer);
       resizeObserver.disconnect();
       ws?.close();
       term.dispose();
