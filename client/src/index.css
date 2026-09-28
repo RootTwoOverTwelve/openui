@@ -188,3 +188,74 @@ html, body {
 .library-markdown blockquote { border-left: 3px solid #3f3f46; margin: .75rem 0; padding: .25rem .75rem; color: #a1a1aa; }
 .library-markdown table { border-collapse: collapse; margin: .75rem 0; }
 .library-markdown th, .library-markdown td { border: 1px solid #27272a; padding: .3rem .6rem; }
+
+/* Category resize handles.
+   React Flow's defaults are a 1px grab strip along each edge and a 5px corner
+   dot, and only while the node is selected — effectively pixel hunting. Widen
+   the targets, tuck them inside the box so they're reachable the moment the
+   pointer is over the category, and keep them invisible until then so they
+   don't swallow canvas drags. The category's own dashed border stays the
+   visual; corner dots appear on hover. */
+.react-flow__resize-control {
+  pointer-events: none;
+}
+.react-flow__node:hover .react-flow__resize-control,
+.react-flow__node.selected .react-flow__resize-control {
+  pointer-events: all;
+}
+
+/* Edge bands: 14px, inside the box */
+.react-flow__resize-control.line {
+  border-color: transparent;
+  background: transparent;
+}
+.react-flow__resize-control.line.left,
+.react-flow__resize-control.line.right {
+  width: 14px;
+  border-left-width: 0;
+  border-right-width: 0;
+}
+.react-flow__resize-control.line.left {
+  left: 0;
+  transform: none;
+}
+.react-flow__resize-control.line.right {
+  left: 100%;
+  transform: translateX(-100%);
+}
+.react-flow__resize-control.line.top,
+.react-flow__resize-control.line.bottom {
+  height: 14px;
+  border-top-width: 0;
+  border-bottom-width: 0;
+}
+.react-flow__resize-control.line.top {
+  top: 0;
+  transform: none;
+}
+.react-flow__resize-control.line.bottom {
+  top: 100%;
+  transform: translateY(-100%);
+}
+
+/* Corner handles: 18px target, small dot shown only on hover/selection */
+.react-flow__resize-control.handle {
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+.react-flow__resize-control.handle::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.75);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.react-flow__node:hover .react-flow__resize-control.handle::after,
+.react-flow__node.selected .react-flow__resize-control.handle::after {
+  opacity: 1;
+}

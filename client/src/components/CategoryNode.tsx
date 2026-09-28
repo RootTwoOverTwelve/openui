@@ -91,13 +91,9 @@ export function CategoryNode({ id, data, selected }: NodeProps) {
 
   return (
     <>
-      <NodeResizer
-        minWidth={150}
-        minHeight={100}
-        isVisible={selected}
-        lineClassName="border-white/20"
-        handleClassName="h-2 w-2 bg-white/50 border border-white/80"
-      />
+      {/* Always rendered so a box can be resized without selecting it first;
+          the hit areas are widened and gated on hover in index.css */}
+      <NodeResizer minWidth={150} minHeight={100} isVisible />
       <div
         className="w-full h-full rounded-lg border-2 border-dashed"
         style={{
