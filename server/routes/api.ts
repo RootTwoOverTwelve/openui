@@ -614,7 +614,7 @@ apiRoutes.post("/status-update", async (c) => {
       const turnBoundary = hookEvent === "Stop" || hookEvent === "SessionStart" || hookEvent === "UserPromptSubmit";
       if (turnBoundary || !session.lastContextReadAt || now - session.lastContextReadAt > 5000) {
         session.lastContextReadAt = now;
-        const usage = readContextUsage(session.transcriptPath, session.model);
+        const usage = readContextUsage(session.transcriptPath, session.model, session.contextUsage?.limit);
         if (usage) session.contextUsage = usage;
       }
     }

@@ -20,7 +20,24 @@ const TAIL_BYTES = 512 * 1024;
 // turn was served with (uncached + cache writes + cache reads). Drops after
 // compaction, so it tracks what /compact would act on. Tail-only read so it
 // stays cheap on long sessions.
-export function readContextUsage(transcriptPath: string, model?: string): ContextUsage | null {
+function usageOf(tokens: number, model: string | undefined, previousLimit?: number): ContextUsage {
+  // Without a hook-reported model string we can't see the [1m] marker. A
+  // prompt over 200k proves the larger window; otherwise keep whatever limit
+  // we had, so a small post-compaction reading doesn't silently switch
+  // denominators and jump the percentage.
+  let limit = model
+    ? contextLimitFor(model)
+    : tokens > 200_000
+      ? 1_000_000
+      : previousLimit || contextLimitFor(undefined);
+  // A turn that actually ran is proof its prompt fit, so never report a
+  // window smaller than one we've observed — the model string doesn't always
+  // carry the [1m] marker for the variant in use.
+  if (tokens > limit) limit = 1_000_000;
+  return { tokens, limit, pct: Math.min(100, Math.round((tokens / limit) * 1000) / 10), at: new Date().toISOString() };
+}
+
+export function readContextUsage(transcriptPath: string, model?: string, previousLimit?: number): ContextUsage | null {
   let fd: number | null = null;
   try {
     fd = openSync(transcriptPath, "r");
@@ -32,11 +49,28 @@ export function readContextUsage(transcriptPath: string, model?: string): Contex
     // The first line may be a partial record when we cut mid-file
     if (start > 0) lines.shift();
 
+    // Whichever comes last wins: an assistant turn's prompt size, or a
+    // compaction boundary. Compacting doesn't produce a new assistant turn,
+    // so reading only assistant records leaves the bar pinned at the
+    // pre-compaction size until the agent is next used.
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i];
-      if (!line || !line.includes('"assistant"')) continue;
+      if (!line) continue;
+      const isAssistant = line.includes('"assistant"');
+      const isBoundary = line.includes('"compact_boundary"');
+      if (!isAssistant && !isBoundary) continue;
+
       let rec: any;
       try { rec = JSON.parse(line); } catch { continue; }
+
+      if (rec.subtype === "compact_boundary") {
+        const post = rec.compactMetadata?.postTokens;
+        if (typeof post === "number" && post > 0) {
+          return usageOf(post, model, previousLimit);
+        }
+        continue;
+      }
+
       if (rec.type !== "assistant" || rec.isSidechain) continue;
       const usage = rec.message?.usage;
       if (!usage) continue;
@@ -45,10 +79,7 @@ export function readContextUsage(transcriptPath: string, model?: string): Contex
         (usage.cache_creation_input_tokens || 0) +
         (usage.cache_read_input_tokens || 0);
       if (!tokens) continue;
-      // Without the hook-reported model string we can't see the [1m]
-      // marker; a prompt over 200k is proof of the larger window
-      const limit = model ? contextLimitFor(model) : (tokens > 200_000 ? 1_000_000 : contextLimitFor(rec.message?.model));
-      return { tokens, limit, pct: Math.min(100, Math.round((tokens / limit) * 1000) / 10), at: new Date().toISOString() };
+      return usageOf(tokens, model || rec.message?.model, previousLimit);
     }
     return null;
   } catch {
