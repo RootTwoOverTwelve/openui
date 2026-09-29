@@ -15,11 +15,6 @@ export function contextLimitFor(model?: string): number {
 
 const TAIL_BYTES = 512 * 1024;
 
-// Read the live context size from the tail of a Claude Code transcript: the
-// most recent main-thread assistant record's usage is the whole prompt that
-// turn was served with (uncached + cache writes + cache reads). Drops after
-// compaction, so it tracks what /compact would act on. Tail-only read so it
-// stays cheap on long sessions.
 function usageOf(tokens: number, model: string | undefined, previousLimit?: number): ContextUsage {
   // Without a hook-reported model string we can't see the [1m] marker. A
   // prompt over 200k proves the larger window; otherwise keep whatever limit
@@ -37,6 +32,12 @@ function usageOf(tokens: number, model: string | undefined, previousLimit?: numb
   return { tokens, limit, pct: Math.min(100, Math.round((tokens / limit) * 1000) / 10), at: new Date().toISOString() };
 }
 
+// Read the live context size from the tail of a Claude Code transcript. An
+// assistant record's usage is the whole prompt that turn was served with
+// (uncached + cache writes + cache reads); a compaction boundary reports the
+// size it reset to. Whichever is later in the file is the current size, so
+// this tracks what /compact acts on. Tail-only read, to stay cheap on long
+// sessions.
 export function readContextUsage(transcriptPath: string, model?: string, previousLimit?: number): ContextUsage | null {
   let fd: number | null = null;
   try {
