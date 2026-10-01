@@ -90,16 +90,21 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
     // feed that Ctrl+J would produce and let xterm's default (CR) alone.
     term.attachCustomKeyEventHandler((ev) => {
       if (
-        ev.type === "keydown" &&
         ev.key === "Enter" &&
         ev.shiftKey &&
         !ev.ctrlKey &&
         !ev.metaKey &&
         !ev.altKey
       ) {
-        const socket = wsRef.current;
-        if (socket?.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: "input", data: "\n" }));
+        // Claim every event type for this keystroke, not just keydown: xterm
+        // consults this handler again on the follow-up keypress, and letting
+        // that one through sends the carriage return that submits.
+        ev.preventDefault();
+        if (ev.type === "keydown") {
+          const socket = wsRef.current;
+          if (socket?.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: "input", data: "\n" }));
+          }
         }
         return false;
       }
