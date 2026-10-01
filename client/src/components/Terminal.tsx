@@ -83,6 +83,29 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
+    // Shift+Enter inserts a newline instead of submitting, matching the
+    // Claude web UI. A terminal can't tell Shift+Enter from Enter — both are
+    // a carriage return — which is why the CLI needs /terminal-setup to remap
+    // it in iTerm2 and friends. Here we own the keyboard, so send the line
+    // feed that Ctrl+J would produce and let xterm's default (CR) alone.
+    term.attachCustomKeyEventHandler((ev) => {
+      if (
+        ev.type === "keydown" &&
+        ev.key === "Enter" &&
+        ev.shiftKey &&
+        !ev.ctrlKey &&
+        !ev.metaKey &&
+        !ev.altKey
+      ) {
+        const socket = wsRef.current;
+        if (socket?.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "input", data: "\n" }));
+        }
+        return false;
+      }
+      return true;
+    });
+
     // Connect WebSocket with small delay to allow session to be ready
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws?sessionId=${sessionId}`;
