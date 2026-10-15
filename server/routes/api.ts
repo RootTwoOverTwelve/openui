@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, buildLaunch, resumeFlags, getUserShell, findClaudeSession, reviveSession, typeAndSubmit } from "../services/sessionManager";
+import { sessions, createSession, deleteSession, buildLaunch, resumeFlagsFor, getUserShell, findClaudeSession, reviveSession, typeAndSubmit } from "../services/sessionManager";
+import { forkOpencodeSession, promptOpencodeSession } from "../services/opencode";
 import { loadState, saveState, savePositions, writeState, sessionToNode, getDataDir, WORKSPACE, type NodePlacement } from "../services/persistence";
 import { debug } from "../services/log";
 import { readContextUsage } from "../services/context";
@@ -82,7 +83,7 @@ apiRoutes.get("/agents", (c) => {
       id: "opencode",
       name: "OpenCode",
       command: "opencode",
-      description: "Open source AI coding assistant",
+      description: "Open models (GLM, etc). Status, context and forks come from its own API",
       color: "#22C55E",
       icon: "code",
     },
@@ -253,11 +254,21 @@ apiRoutes.post("/sessions", async (c) => {
   // ID, so the parent keeps running untouched
   let forkedFrom;
   let parent;
+  let opencodeForkId: string | null = null;
   if (forkFromSessionId) {
     parent = sessions.get(forkFromSessionId);
     if (!parent) return c.json({ error: "Parent session not found" }, 404);
-    if (parent.agentId !== "claude") return c.json({ error: "Only Claude Code sessions can be forked" }, 400);
-    if (!parent.claudeSessionId) return c.json({ error: "Parent has no Claude session ID yet (send it a message first)" }, 400);
+    if (parent.agentId !== "claude" && parent.agentId !== "opencode") {
+      return c.json({ error: "Only Claude Code and OpenCode sessions can be forked" }, 400);
+    }
+    if (!parent.claudeSessionId) return c.json({ error: "Parent has no agent session ID yet (send it a message first)" }, 400);
+    // OpenCode copies the history server-side and returns a brand new
+    // session ID, which we then attach a terminal to. Claude Code instead
+    // forks at launch time via --fork-session, handled by resumeFlags.
+    if (parent.agentId === "opencode") {
+      opencodeForkId = await forkOpencodeSession(parent.claudeSessionId);
+      if (!opencodeForkId) return c.json({ error: "OpenCode could not fork this session" }, 502);
+    }
     forkedFrom = {
       sessionId: forkFromSessionId,
       claudeSessionId: parent.claudeSessionId,
@@ -301,10 +312,20 @@ apiRoutes.post("/sessions", async (c) => {
     ticketPromptTemplate,
     initialPrompt,
     systemPrompt,
-    resumeClaudeSessionId,
+    resumeClaudeSessionId: opencodeForkId || resumeClaudeSessionId,
     forkedFrom,
     forkKind,
   });
+
+  // An OpenCode fork's briefing goes in over the API once the agent is up.
+  // Claude Code gets the same text invisibly, via the plugin's SessionStart
+  // hook; OpenCode has no equivalent, so here it arrives as a first message.
+  if (opencodeForkId && systemPrompt?.trim()) {
+    const briefing = systemPrompt.trim();
+    setTimeout(() => {
+      promptOpencodeSession(opencodeForkId!, briefing).catch(() => {});
+    }, 4000);
+  }
 
   // Queue a heads-up for the parent. It must NOT go out yet: the fork
   // snapshots the parent's transcript when it boots (~2s), and anything
@@ -345,9 +366,9 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
   // Resume the previous Claude conversation if we know its ID (or re-fork
   // the parent for a fork that never booted), unless the original command
   // already pins one.
-  const flags = session.agentId === "claude" && !/--resume\b|--continue\b|(^|\s)-[cr]\b/.test(session.command)
-    ? resumeFlags(session)
-    : "";
+  const flags = /--resume\b|--continue\b|--session\b|(^|\s)-[crs]\b/.test(session.command)
+    ? ""
+    : resumeFlagsFor(session.agentId, session);
   const canResume = flags !== "";
 
   // On resume the conversation already has the initial prompt, so it is only

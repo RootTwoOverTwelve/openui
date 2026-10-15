@@ -175,7 +175,7 @@ export function ForkModal() {
 
                 <div className="p-5 space-y-5 overflow-y-auto">
                   <p className="text-xs text-zinc-500">
-                    The fork starts with this conversation's full context as a new Claude session. “{parentName}” keeps running.
+                    The fork starts with this conversation's full context as a new {parent.agentId === "opencode" ? "OpenCode" : "Claude"} session. “{parentName}” keeps running.
                   </p>
 
                   {/* Kind */}

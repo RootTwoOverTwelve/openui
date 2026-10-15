@@ -121,6 +121,20 @@ export function resumeFlags(session: Pick<Session, "claudeSessionId" | "forkedFr
   return "";
 }
 
+// OpenCode takes a session ID of our choosing and creates it if it does not
+// exist, so the one flag both starts a conversation and resumes it. Nothing
+// has to be discovered from hooks first, unlike `claude --resume`.
+export function resumeFlagsFor(agentId: string, session: Pick<Session, "claudeSessionId" | "forkedFrom">): string {
+  if (agentId === "opencode") return session.claudeSessionId ? ` --session ${session.claudeSessionId}` : "";
+  if (agentId === "claude") return resumeFlags(session);
+  return "";
+}
+
+// Our OpenUI session id is not a legal OpenCode id, which must start "ses".
+export function opencodeSessionId(sessionId: string): string {
+  return `ses_${sessionId.replace(/[^A-Za-z0-9]/g, "")}`;
+}
+
 // Inject --plugin-dir flag for Claude commands if plugin is available
 export function injectPluginDir(command: string, agentId: string): string {
   if (agentId !== "claude") return command;
@@ -418,7 +432,10 @@ export function createSession(params: {
     initialPrompt: initialPrompt?.trim() || undefined,
     systemPrompt: systemPrompt?.trim() || undefined,
     termModes: new Set<number>(),
-    claudeSessionId: resumeClaudeSessionId || undefined,
+    // The agent's own session ID. For OpenCode we pick it up front (the CLI
+    // creates it on first launch), so the node is resumable and forkable
+    // immediately instead of waiting for a hook to report one.
+    claudeSessionId: resumeClaudeSessionId || (agentId === "opencode" ? opencodeSessionId(sessionId) : undefined),
     forkedFrom,
     forkKind,
   };
@@ -454,7 +471,7 @@ export function createSession(params: {
   });
 
   // Run the command (inject plugin-dir for Claude if available)
-  const launchCommand = agentId === "claude" ? `${command}${resumeFlags(session)}` : command;
+  const launchCommand = `${command}${resumeFlagsFor(agentId, session)}`;
   const launch = buildLaunch({ sessionId, agentId, command: launchCommand, initialPrompt: session.initialPrompt });
   const finalCommand = launch.command;
   debug(`\x1b[38;5;82m[pty-write]\x1b[0m Writing command: ${finalCommand}`);

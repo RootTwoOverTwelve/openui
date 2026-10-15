@@ -232,9 +232,11 @@ export function Sidebar() {
     }
   };
 
-  // Command to continue this Claude session from a normal terminal
+  // Command to continue this session from a normal terminal. OpenCode takes
+  // the session ID directly; Claude Code needs --resume.
+  const resumeFlag = session?.agentId === "opencode" ? "--session" : "--resume";
   const resumeCommand = session?.claudeSessionId
-    ? `cd '${session.cwd.replace(/'/g, `'\\''`)}' && ${session.command} --resume ${session.claudeSessionId}`
+    ? `cd '${session.cwd.replace(/'/g, `'\\''`)}' && ${session.command} ${resumeFlag} ${session.claudeSessionId}`
     : null;
 
   const [copied, setCopied] = useState(false);
@@ -273,7 +275,7 @@ export function Sidebar() {
   const displayColor = editColor || session?.customColor || session?.color || "#888";
   const statusInfo = statusConfig[session?.status || "idle"];
   const isDisconnected = session?.status === "disconnected";
-  const canResume = session?.agentId === "claude" && !!session?.claudeSessionId;
+  const canResume = (session?.agentId === "claude" || session?.agentId === "opencode") && !!session?.claudeSessionId;
 
   return (
     <AnimatePresence>

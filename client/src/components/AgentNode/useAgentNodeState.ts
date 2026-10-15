@@ -49,10 +49,11 @@ export function useAgentNodeState(
     setSidebarOpen(false);
   };
 
-  const canFork = session?.agentId === "claude" && !!session?.claudeSessionId;
-  const forkDisabledReason = session?.agentId !== "claude"
-    ? "Only Claude Code sessions can be forked"
-    : "Waiting for the Claude session ID — send the agent a message first";
+  const forkable = session?.agentId === "claude" || session?.agentId === "opencode";
+  const canFork = forkable && !!session?.claudeSessionId;
+  const forkDisabledReason = !forkable
+    ? "Only Claude Code and OpenCode sessions can be forked"
+    : "Waiting for the agent's session ID — send the agent a message first";
 
   const handleFork = () => {
     setForkForNodeId(id);

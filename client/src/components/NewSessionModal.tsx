@@ -977,7 +977,13 @@ export function NewSessionModal({
                       type="text"
                       value={commandArgs}
                       onChange={(e) => setCommandArgs(e.target.value)}
-                      placeholder={selectedAgent?.command ? "e.g. --model opus or --resume" : "e.g. ralph --monitor, ralph-setup, ralph-import"}
+                      placeholder={
+                        selectedAgent?.id === "opencode"
+                          ? "usually blank — model and key come from ~/.config/opencode"
+                          : selectedAgent?.command
+                            ? "e.g. --model opus or --resume"
+                            : "e.g. ralph --monitor, ralph-setup, ralph-import"
+                      }
                       className="w-full px-3 py-2 rounded-md bg-canvas border border-border text-white text-sm placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors font-mono"
                     />
                     {selectedAgent && (selectedAgent.command || commandArgs) && (

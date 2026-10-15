@@ -5,6 +5,7 @@ import { apiRoutes } from "./routes/api";
 import { sessions, restoreSessions } from "./services/sessionManager";
 import { saveState, importLegacyState, getDataDir, WORKSPACE } from "./services/persistence";
 import { modeSequence } from "./services/termModes";
+import { startOpencodeWatcher, isOpencodeAvailable } from "./services/opencode";
 import type { WebSocketData } from "./types";
 
 const app = new Hono();
@@ -139,6 +140,27 @@ Bun.serve<WebSocketData>({
 const imported = importLegacyState();
 if (imported) log(`\x1b[38;5;141m[persistence]\x1b[0m Imported existing state from ${imported} into workspace "${WORKSPACE}" (original left in place)`);
 restoreSessions();
+
+// OpenCode reports status and token usage over its own event stream, which
+// stands in for the plugin hooks Claude Code needs. Nothing here is
+// required for Claude nodes, so a missing OpenCode install is not an error.
+if (isOpencodeAvailable()) {
+  startOpencodeWatcher(sessions, (session, event) => {
+    for (const client of session.clients) {
+      if (client.readyState === 1) {
+        client.send(JSON.stringify({
+          type: "status",
+          status: session.status,
+          isRestored: session.isRestored,
+          currentTool: session.currentTool,
+          hookEvent: event,
+        }));
+      }
+    }
+  });
+} else {
+  log(`\x1b[38;5;245m[opencode]\x1b[0m Not detected; OpenCode nodes will run without status or context`);
+}
 
 log(`\x1b[38;5;141m[server]\x1b[0m Running on http://localhost:${PORT}`);
 log(`\x1b[38;5;245m[server]\x1b[0m Launch directory: ${process.env.LAUNCH_CWD || process.cwd()}`);
