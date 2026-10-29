@@ -30,7 +30,10 @@ interface Service {
 
 let cached: Service | null = null;
 let cachedAt = 0;
-const SERVICE_TTL = 30_000;
+// Long, because a port change announces itself: any failed request clears
+// the cache, so the next call re-reads `service status` anyway. Shorter
+// would only mean spawning that process under the status poll for nothing.
+const SERVICE_TTL = 600_000;
 
 // The background service picks a port at startup and records the password
 // in the user's config. `opencode service status` prints the URL, and
@@ -190,11 +193,31 @@ type Broadcast = (session: Session, event: string) => void;
 
 let watching = false;
 
+// The stream sends a heartbeat every 15 seconds, so three missed ones mean
+// the socket is wedged. A connection reset that the runtime never surfaces
+// as an error leaves `read()` waiting forever, and because status only ever
+// arrives on this stream every node then freezes on whatever it last saw —
+// typically "Working", long after the turn ended.
+const STREAM_SILENCE_MS = 45_000;
+
+// `/api/session/active` answers "which sessions are executing right now" for
+// every session in one request, so it is cheap enough to poll underneath the
+// stream as a safety net: a terminal event lost to a drop self-corrects.
+const ACTIVE_POLL_MS = 10_000;
+
+// Don't let a poll whose answer was computed before an `execution.started`
+// event push a session that has only just begun back to idle.
+const IDLE_GRACE_MS = 5_000;
+
+function isBusy(status: AgentStatus | undefined): boolean {
+  return status === "running" || status === "tool_calling";
+}
+
 // Subscribe to the event stream and keep session records current. The
 // stream is documented as volatile — a slow consumer is dropped and events
-// during a disconnection are missed — so this reconnects and, because every
-// event carries a per-session `durable.seq`, a gap is detectable; on
-// reconnect we re-read each tracked session so nothing stays stale.
+// during a disconnection are missed — so this reconnects, watches for
+// silence, and reconciles every tracked session against the service's own
+// idea of what is running, both on reconnect and on a timer.
 export function startOpencodeWatcher(sessions: Map<string, Session>, broadcast: Broadcast): void {
   if (watching) return;
   watching = true;
@@ -207,6 +230,14 @@ export function startOpencodeWatcher(sessions: Map<string, Session>, broadcast: 
   };
 
   const seqs = new Map<string, number>();
+
+  const setStatus = (session: Session, next: AgentStatus, event: string): void => {
+    session.status = next;
+    session.pluginReportedStatus = true;
+    session.lastPluginStatusTime = Date.now();
+    session.lastHookEvent = event;
+    broadcast(session, event);
+  };
 
   const applyUsage = async (session: Session, opencodeId: string, tokens: any): Promise<void> => {
     // Live context is the prompt this step was served with: fresh input
@@ -258,26 +289,74 @@ export function startOpencodeWatcher(sessions: Map<string, Session>, broadcast: 
       session.currentTool = undefined;
     }
 
-    session.status = next;
-    session.pluginReportedStatus = true;
-    session.lastPluginStatusTime = Date.now();
-    session.lastHookEvent = event.type;
-    broadcast(session, event.type);
+    setStatus(session, next, event.type);
   };
+
+  // Bring every attached session back in line with what the service says is
+  // executing. An `error` is left alone: it is a verdict on the last turn,
+  // and only a fresh event should clear it.
+  const reconcile = async (): Promise<void> => {
+    const body = await call("/api/session/active");
+    const data = body?.data;
+    if (!data || typeof data !== "object") return;
+    const active = new Set(Object.keys(data));
+
+    for (const session of sessions.values()) {
+      if (session.agentId !== "opencode" || !session.pty || !session.claudeSessionId) continue;
+      const running = active.has(session.claudeSessionId);
+      if (running) {
+        if (isBusy(session.status)) continue;
+        setStatus(session, "running", "poll:active");
+      } else {
+        if (!isBusy(session.status)) continue;
+        if (Date.now() - (session.lastPluginStatusTime || 0) < IDLE_GRACE_MS) continue;
+        session.currentTool = undefined;
+        setStatus(session, "idle", "poll:idle");
+      }
+    }
+  };
+
+  const pollForever = async (): Promise<void> => {
+    for (;;) {
+      await reconcile().catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, ACTIVE_POLL_MS));
+    }
+  };
+
+  let failures = 0;
 
   const connect = async (): Promise<void> => {
     const svc = resolveService();
     if (!svc) {
+      if (failures++ === 0) log(`\x1b[38;5;42m[opencode]\x1b[0m Service not reachable; retrying`);
       setTimeout(connect, 10_000);
       return;
     }
     await loadLimits();
+
+    const controller = new AbortController();
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    const arm = (): void => {
+      if (watchdog) clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        debug(`[opencode] no traffic for ${STREAM_SILENCE_MS}ms; reconnecting`);
+        controller.abort();
+      }, STREAM_SILENCE_MS);
+    };
+
     try {
+      arm();
       const res = await fetch(`${svc.url}/api/event`, {
         headers: { Authorization: authHeader(svc) },
+        signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-      log(`\x1b[38;5;42m[opencode]\x1b[0m Watching ${svc.url}/api/event`);
+      if (failures) log(`\x1b[38;5;42m[opencode]\x1b[0m Reconnected to ${svc.url}/api/event`);
+      else log(`\x1b[38;5;42m[opencode]\x1b[0m Watching ${svc.url}/api/event`);
+      failures = 0;
+      // Anything that happened while we were away is already settled, so
+      // take the service's word for it before trusting the stream again.
+      reconcile().catch(() => {});
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -285,6 +364,7 @@ export function startOpencodeWatcher(sessions: Map<string, Session>, broadcast: 
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
+        arm();
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
@@ -297,13 +377,18 @@ export function startOpencodeWatcher(sessions: Map<string, Session>, broadcast: 
           }
         }
       }
+      debug("[opencode] event stream closed");
     } catch (e) {
-      debug(`[opencode] event stream ended: ${e}`);
+      if (failures++ === 0) log(`\x1b[38;5;42m[opencode]\x1b[0m Event stream dropped (${e}); reconnecting`);
+      else debug(`[opencode] event stream ended: ${e}`);
       cached = null;
+    } finally {
+      if (watchdog) clearTimeout(watchdog);
     }
-    // Reconnect; a fresh stream plus the seq check above re-syncs state
+    // Reconnect; the reconcile above re-syncs whatever the gap swallowed
     setTimeout(connect, 3000);
   };
 
   connect();
+  pollForever();
 }
